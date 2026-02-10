@@ -1,4 +1,4 @@
-import { Tldraw, useEditor, track } from 'tldraw'
+import { Tldraw, useEditor } from 'tldraw'
 import { useEffect, useRef } from 'react'
 import 'tldraw/tldraw.css'
 
@@ -26,7 +26,7 @@ function DynamicTitleUpdater() {
 		const updateTitle = () => {
 			const pageId = editor.getCurrentPageId()
 			const page = editor.getPage(pageId)
-			const pageName = page?.name?.trim() || `Untitled`
+			const pageName = page?.name?.trim() || 'Untitled'
 			document.title = `drewit - ${pageName}`
 		}
 
@@ -38,13 +38,15 @@ function DynamicTitleUpdater() {
 			(update) => {
 				const { changes } = update
 				if (
-					changes.state?.page?.pageId ||                    // page switch
-					Object.keys(changes.updated || {}).some((id) => id.startsWith('page:') && 'name' in changes.updated[id][1])
+					changes.state?.page?.pageId || // page switch
+					Object.keys(changes.updated || {}).some((id) =>
+						id.startsWith('page:') && 'name' in (changes.updated[id]?.[1] ?? {})
+					)
 				) {
 					updateTitle()
 				}
 			},
-			{ source: 'all', scope: 'document' } // limit scope
+			{ source: 'all', scope: 'document' }
 		)
 
 		// Safety interval (low frequency)
@@ -76,7 +78,8 @@ function DynamicFaviconUpdater() {
 			try {
 				const viewportBounds = editor.getViewportPageBounds()
 
-				const { blob } = await editor.toImage([], {
+				// Use `as const` to match the expected empty tuple / readonly TLShapeId[] type
+				const { blob } = await editor.toImage([] as const, {
 					bounds: viewportBounds,
 					format: 'png',
 					scale: 0.75,
@@ -130,11 +133,11 @@ function DynamicFaviconUpdater() {
 			}
 		}
 
-		const throttledUpdate = throttle(updateFavicon, 250) // increased to reduce load
+		const throttledUpdate = throttle(updateFavicon, 250)
 
 		const unsubscribe = editor.store.listen(
 			() => throttledUpdate(),
-			{ source: 'user', scope: 'session' } // narrower scope
+			{ source: 'user', scope: 'session' }
 		)
 
 		// Initial call
