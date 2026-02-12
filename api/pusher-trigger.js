@@ -45,15 +45,32 @@ export default async function handler(req, res) {
 
     // 2. Trigger Pusher Event (Exclude sender if socketId is provided)
     const pusherOptions = socketId ? { socket_id: socketId } : {};
-    await pusher.trigger(`drawing-${id}`, 'drawing-update', {
+    const payload = {
       snapshot,
       timestamp: timestamp || Date.now(),
-    }, pusherOptions);
+    };
 
-    console.log(`[Pusher] Event triggered for ${id} (Excluded: ${socketId || 'none'})`);
+    // Pusher has a 10KB limit for triggers
+    const payloadSize = JSON.stringify(payload).length;
+    if (payloadSize > 10000) {
+      console.warn(`[Pusher] Payload too large: ${payloadSize} bytes. Max is 10,000 bytes.`);
+      return res.status(413).json({ 
+        error: 'Payload too large for Pusher sync', 
+        size: payloadSize,
+        message: 'Your drawing has too many shapes for instant sync. Try a smaller drawing or a paid Pusher plan.'
+      });
+    }
+
+    await pusher.trigger(`drawing-${id}`, 'drawing-update', payload, pusherOptions);
+
+    console.log(`[Pusher] Event triggered for ${id} (Size: ${payloadSize} bytes)`);
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error('[Pusher] Error in pusher-trigger:', err);
-    res.status(500).json({ error: err.message });
+    console.error('[Pusher] Server Error:', err);
+    res.status(500).json({ 
+      error: 'Pusher Trigger Failed', 
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 }

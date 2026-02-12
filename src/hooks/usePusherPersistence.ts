@@ -1,4 +1,4 @@
-import { createTLStore, defaultShapeUtils, throttle } from 'tldraw'
+import { createTLStore, defaultShapeUtils, getSnapshot, throttle } from 'tldraw'
 import { useEffect, useState, useRef } from 'react'
 import Pusher from 'pusher-js'
 
@@ -78,7 +78,7 @@ export function usePusherPersistence() {
 			if (rawSnapshot && remoteTimestamp > lastUpdateTimestamp.current) {
 				// Filter incoming snapshot to preserve local camera
 				const newSnapshot = filterSnapshot(rawSnapshot)
-				const current = filterSnapshot(store.getSnapshot())
+				const current = filterSnapshot(getSnapshot(store))
 				
 				// Deep string comparison (simple but works for shapes)
 				if (JSON.stringify(newSnapshot.store) !== JSON.stringify(current.store)) {
@@ -105,7 +105,7 @@ export function usePusherPersistence() {
 			
 			const socketId = pusherRef.current?.connection.socket_id
 			// Filter outgoing snapshot to reduce payload and prevent syncing camera
-			const snapshot = filterSnapshot(store.getSnapshot())
+			const snapshot = filterSnapshot(getSnapshot(store))
 			const timestamp = Date.now()
 			lastUpdateTimestamp.current = timestamp
 			
