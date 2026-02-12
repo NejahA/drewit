@@ -51,86 +51,79 @@ export function useSupabasePersistence() {
 	useEffect(() => {
 		if (loadingState.status !== 'ready') return
 
-		const channel = supabase.channel(`canvas:${DRAWING_ID}`, {
+		console.log('useSupabasePersistence: Attempting to join channel:', `drawing_sync`)
+		
+		const channel = supabase.channel('drawing_sync', {
 			config: {
 				broadcast: { self: false },
-			},
+				presence: { key: 'canvas' }
+			}
 		})
 
 		const saveToDb = throttle(async () => {
 			const snapshot = store.getSnapshot()
-			console.log('useSupabasePersistence: Saving to DB...')
 			try {
 				const { error } = await supabase
 					.from('drawings')
-					.upsert({
-						id: DRAWING_ID,
-						snapshot,
-						updated_at: new Date().toISOString(),
-					})
+					.upsert({ id: DRAWING_ID, snapshot, updated_at: new Date().toISOString() })
 				if (error) throw error
+				console.log('useSupabasePersistence: Saved to DB')
 			} catch (err) {
 				console.error('useSupabasePersistence: DB Save Error:', err)
 			}
 		}, 2000)
 
 		const broadcastUpdate = throttle(() => {
-			console.log('useSupabasePersistence: Broadcasting update...')
 			channel.send({
 				type: 'broadcast',
 				event: 'canvas-update',
 				payload: { snapshot: store.getSnapshot() },
+			}).then(resp => {
+				if (resp !== 'ok') console.warn('useSupabasePersistence: Broadcast send status:', resp)
 			})
-		}, 100) // Fast throttle for broadcast
+		}, 100)
 
 		const unsubscribe = store.listen((update) => {
 			if (update.source === 'user') {
-				broadcastUpdate()
 				saveToDb()
+				if (channel.state === 'joined') {
+					broadcastUpdate()
+				}
 			}
 		}, { scope: 'document' })
 
-		console.log('useSupabasePersistence: Connecting to channel:', `canvas:${DRAWING_ID}`)
-		
 		channel
 			.on('broadcast', { event: 'canvas-update' }, ({ payload }) => {
 				const newSnapshot = payload.snapshot
 				if (newSnapshot) {
-					console.log('useSupabasePersistence: Received Broadcast')
 					const current = store.getSnapshot()
 					if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
+						console.log('useSupabasePersistence: Syncing via Broadcast')
 						store.loadSnapshot(newSnapshot)
 					}
 				}
 			})
-			.on(
-				'postgres_changes',
-				{
-					event: 'UPDATE',
-					schema: 'public',
-					table: 'drawings',
-					filter: `id=eq.${DRAWING_ID}`,
-				},
-				(payload) => {
-					console.log('useSupabasePersistence: Received Postgres Update')
-					const newSnapshot = payload.new.snapshot
-					if (newSnapshot) {
-						const current = store.getSnapshot()
-						if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
-							store.loadSnapshot(newSnapshot)
-						}
+			.on('postgres_changes', { 
+				event: 'UPDATE', 
+				schema: 'public', 
+				table: 'drawings', 
+				filter: `id=eq.${DRAWING_ID}` 
+			}, (payload) => {
+				const newSnapshot = payload.new.snapshot
+				if (newSnapshot) {
+					const current = store.getSnapshot()
+					if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
+						console.log('useSupabasePersistence: Syncing via Postgres')
+						store.loadSnapshot(newSnapshot)
 					}
 				}
-			)
+			})
 			.subscribe((status, err) => {
 				console.log('useSupabasePersistence: Subscription Status:', status)
-				if (err) {
-					console.error('useSupabasePersistence: Subscription Error Detail:', err)
-					setLoadingState(prev => ({ ...prev, error: `Realtime Error: ${status}` }))
-				}
+				if (err) console.error('useSupabasePersistence: Subscription Error:', err)
 				
 				if (status === 'CHANNEL_ERROR') {
-					console.warn('useSupabasePersistence: CHANNEL_ERROR detected. Please check if Realtime is enabled in Supabase for the "drawings" table.')
+					console.error('useSupabasePersistence: CHANNEL_ERROR. This usually means Realtime is disabled for this project or table.')
 				}
 			})
 
