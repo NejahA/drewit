@@ -1,6 +1,7 @@
 import { Tldraw, useEditor } from 'tldraw'
 import { useEffect, useRef } from 'react'
 import 'tldraw/tldraw.css'
+import { useMongoosePersistence } from './hooks/useMongoosePersistence'
 
 // ────────────────────────────────────────────────
 // Throttle utility
@@ -14,25 +15,20 @@ function throttle<T extends () => void>(fn: T, delay: number): T {
 		}
 	} as T
 }
-
 // ────────────────────────────────────────────────
 // Reliable title updater – uses page events + minimal store filtering
 function DynamicTitleUpdater() {
 	const editor = useEditor()
-
 	useEffect(() => {
 		if (!editor) return
-
 		const updateTitle = () => {
 			const pageId = editor.getCurrentPageId()
 			const page = editor.getPage(pageId)
 			const pageName = page?.name?.trim() || 'Untitled'
 			document.title = `drewit - ${pageName}`
 		}
-
 		// Immediate update
 		updateTitle()
-
 		// Listen to page switches / renames via store (narrow filter)
 		const unsubscribeStore = editor.store.listen(
 			(update) => {
@@ -48,7 +44,6 @@ function DynamicTitleUpdater() {
 			},
 			{ source: 'all', scope: 'document' }
 		)
-
 		// Safety interval (low frequency)
 		const interval = setInterval(updateTitle, 3000)
 
@@ -57,27 +52,21 @@ function DynamicTitleUpdater() {
 			clearInterval(interval)
 		}
 	}, [editor])
-
 	return null
 }
-
 // ────────────────────────────────────────────────
 // Favicon updater – isolated listener, longer throttle
 function DynamicFaviconUpdater() {
 	const editor = useEditor()
 	const isUpdatingRef = useRef(false)
 	const lastDataUrlRef = useRef<string | null>(null)
-
 	useEffect(() => {
 		if (!editor) return
-
 		const updateFavicon = async () => {
 			if (isUpdatingRef.current) return
 			isUpdatingRef.current = true
-
 			try {
 				const viewportBounds = editor.getViewportPageBounds()
-
 				// Use `as const` to match the expected empty tuple / readonly TLShapeId[] type
 				const { blob } = await editor.toImage([] as const, {
 					bounds: viewportBounds,
@@ -86,34 +75,26 @@ function DynamicFaviconUpdater() {
 					background: false,
 					quality: 0.6,
 				})
-
 				const url = URL.createObjectURL(blob)
 				const img = new Image()
 				img.crossOrigin = 'anonymous'
 				img.src = url
-
 				await new Promise<void>((resolve, reject) => {
 					img.onload = () => resolve()
 					img.onerror = () => reject(new Error('Image load failed'))
 				})
-
 				const canvas = document.createElement('canvas')
 				canvas.width = 32
 				canvas.height = 32
 				const ctx = canvas.getContext('2d')
 				if (!ctx) return
-
 				const side = Math.min(img.width, img.height)
 				const sx = (img.width - side) / 2
 				const sy = (img.height - side) / 2
-
 				ctx.drawImage(img, sx, sy, side, side, 0, 0, 32, 32)
-
 				const newDataUrl = canvas.toDataURL('image/png', 0.7)
-
 				if (newDataUrl !== lastDataUrlRef.current) {
 					lastDataUrlRef.current = newDataUrl
-
 					const oldLink = document.getElementById('dynamic-favicon') as HTMLLinkElement | null
 					if (oldLink?.parentNode) {
 						const newLink = document.createElement('link')
@@ -124,7 +105,6 @@ function DynamicFaviconUpdater() {
 						oldLink.parentNode.replaceChild(newLink, oldLink)
 					}
 				}
-
 				URL.revokeObjectURL(url)
 			} catch (err) {
 				console.warn('Favicon update skipped:', err)
@@ -132,25 +112,30 @@ function DynamicFaviconUpdater() {
 				isUpdatingRef.current = false
 			}
 		}
-
 		const throttledUpdate = throttle(updateFavicon, 250)
 
 		const unsubscribe = editor.store.listen(
 			() => throttledUpdate(),
 			{ source: 'user', scope: 'session' }
 		)
-
 		// Initial call
 		updateFavicon()
-
 		return () => unsubscribe()
 	}, [editor])
-
 	return null
 }
-
 // ────────────────────────────────────────────────
 export default function App() {
+	const { store, loadingState } = useMongoosePersistence()
+
+	if (loadingState.status === 'loading') {
+		return (
+			<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>
+				Loading shared canvas...
+			</div>
+		)
+	}
+
 	return (
 		<div
 			style={{
@@ -160,7 +145,8 @@ export default function App() {
 			}}
 		>
 			<Tldraw
-				persistenceKey="drewit-main-canvas-v1"
+				store={store}
+				autoFocus
 			>
 				<DynamicTitleUpdater />
 				<DynamicFaviconUpdater />
