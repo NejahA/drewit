@@ -99,9 +99,11 @@ export function useSupabasePersistence() {
 					const newSnapshot = payload.new.snapshot
 					if (newSnapshot) {
 						// Don't reload if we are already in sync
-						// (Using a simple hash or just skipping if we were the last one to save would be better,
-						// but tldraw handles some merge logic internally if we use loadSnapshot)
-						store.loadSnapshot(newSnapshot)
+						const current = store.getSnapshot()
+						if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
+							console.log('useSupabasePersistence: Syncing remote changes...')
+							store.loadSnapshot(newSnapshot)
+						}
 					}
 				}
 			)

@@ -1,7 +1,7 @@
 import { Tldraw, useEditor } from 'tldraw'
 import { useEffect, useRef } from 'react'
 import 'tldraw/tldraw.css'
-import { useMongoosePersistence } from './hooks/useMongoosePersistence'
+import { useSupabasePersistence } from './hooks/useSupabasePersistence'
 
 // ────────────────────────────────────────────────
 // Throttle utility
@@ -125,7 +125,7 @@ function DynamicFaviconUpdater() {
 }
 // ────────────────────────────────────────────────
 export default function App() {
-	const { store, loadingState } = useMongoosePersistence()
+	const { store, loadingState } = useSupabasePersistence()
 
 	if (loadingState.status === 'loading') {
 		return (
