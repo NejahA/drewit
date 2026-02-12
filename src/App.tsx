@@ -5,7 +5,7 @@ import { useMongoosePersistence } from './hooks/useMongoosePersistence'
 
 // ────────────────────────────────────────────────
 // Throttle utility
-function throttle<T extends () => void>(fn: T, delay: number): T {
+function throttle(fn: (...args: any[]) => void, delay: number) {
 	let lastCall = 0
 	return function (this: any, ...args: any[]) {
 		const now = Date.now()
@@ -13,7 +13,7 @@ function throttle<T extends () => void>(fn: T, delay: number): T {
 			lastCall = now
 			fn.apply(this, args)
 		}
-	} as T
+	}
 }
 // ────────────────────────────────────────────────
 // Reliable title updater – uses page events + minimal store filtering
@@ -25,7 +25,7 @@ function DynamicTitleUpdater() {
 			const pageId = editor.getCurrentPageId()
 			const page = editor.getPage(pageId)
 			const pageName = page?.name?.trim() || 'Untitled'
-			document.title = `drewit - ${pageName}`
+			document.title = `trewid - ${pageName}`
 		}
 		// Immediate update
 		updateTitle()
@@ -34,7 +34,6 @@ function DynamicTitleUpdater() {
 			(update) => {
 				const { changes } = update
 				if (
-					changes.state?.page?.pageId || // page switch
 					Object.entries(changes.updated || {}).some(([id, change]) =>
 						id.startsWith('page:') && 'name' in (change?.[1] ?? {})
 					)

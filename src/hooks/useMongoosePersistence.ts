@@ -58,5 +58,36 @@ export function useMongoosePersistence() {
 		}
 	}, [store, loadingState.status])
 
+	useEffect(() => {
+		if (loadingState.status !== 'ready') return
+
+		let isCancelled = false
+
+		async function pollServer() {
+			try {
+				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
+				if (response.ok) {
+					const snapshot = await response.json()
+					if (snapshot && !isCancelled) {
+						// Only load if different to minimize disruption
+						const current = store.getSnapshot()
+						if (JSON.stringify(snapshot) !== JSON.stringify(current)) {
+							store.loadSnapshot(snapshot)
+						}
+					}
+				}
+			} catch (err) {
+				console.error('Polling error:', err)
+			}
+		}
+
+		const interval = setInterval(pollServer, 3000)
+
+		return () => {
+			isCancelled = true
+			clearInterval(interval)
+		}
+	}, [store, loadingState.status])
+
 	return { store, loadingState }
 }
