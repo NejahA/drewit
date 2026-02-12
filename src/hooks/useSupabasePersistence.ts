@@ -67,5 +67,37 @@ export function useSupabasePersistence() {
 		}
 	}, [store, loadingState.status])
 
+	useEffect(() => {
+		if (loadingState.status !== 'ready') return
+
+		const channel = supabase
+			.channel(`drawing:${DRAWING_ID}`)
+			.on(
+				'postgres_changes',
+				{
+					event: 'UPDATE',
+					schema: 'public',
+					table: 'drawings',
+					filter: `id=eq.${DRAWING_ID}`,
+				},
+				(payload) => {
+					const newSnapshot = payload.new.snapshot
+					if (newSnapshot) {
+						// Simple check to avoid reloading our own changes if possible
+						// though tldraw handles some of this internally
+						const current = store.getSnapshot()
+						if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
+							store.loadSnapshot(newSnapshot)
+						}
+					}
+				}
+			)
+			.subscribe()
+
+		return () => {
+			supabase.removeChannel(channel)
+		}
+	}, [store, loadingState.status])
+
 	return { store, loadingState }
 }

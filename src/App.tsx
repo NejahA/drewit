@@ -1,7 +1,7 @@
 import { Tldraw, useEditor } from 'tldraw'
 import { useEffect, useRef } from 'react'
 import 'tldraw/tldraw.css'
-import { useMongoosePersistence } from './hooks/useMongoosePersistence'
+import { useSupabasePersistence } from './hooks/useSupabasePersistence'
 
 // ────────────────────────────────────────────────
 // Throttle utility
@@ -25,7 +25,7 @@ function DynamicTitleUpdater() {
 			const pageId = editor.getCurrentPageId()
 			const page = editor.getPage(pageId)
 			const pageName = page?.name?.trim() || 'Untitled'
-			document.title = `trewid - ${pageName}`
+			document.title = `dessimbol - ${pageName}`
 		}
 		// Immediate update
 		updateTitle()
@@ -125,7 +125,7 @@ function DynamicFaviconUpdater() {
 }
 // ────────────────────────────────────────────────
 export default function App() {
-	const { store, loadingState } = useMongoosePersistence()
+	const { store, loadingState } = useSupabasePersistence()
 
 	if (loadingState.status === 'loading') {
 		return (
