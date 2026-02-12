@@ -90,11 +90,13 @@ export function useSupabasePersistence() {
 			}
 		}, { scope: 'document' })
 
+		console.log('useSupabasePersistence: Connecting to channel:', `canvas:${DRAWING_ID}`)
+		
 		channel
 			.on('broadcast', { event: 'canvas-update' }, ({ payload }) => {
-				console.log('useSupabasePersistence: Received broadcast update')
 				const newSnapshot = payload.snapshot
 				if (newSnapshot) {
+					console.log('useSupabasePersistence: Received Broadcast')
 					const current = store.getSnapshot()
 					if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
 						store.loadSnapshot(newSnapshot)
@@ -110,7 +112,7 @@ export function useSupabasePersistence() {
 					filter: `id=eq.${DRAWING_ID}`,
 				},
 				(payload) => {
-					console.log('useSupabasePersistence: Received DB fallback update')
+					console.log('useSupabasePersistence: Received Postgres Update')
 					const newSnapshot = payload.new.snapshot
 					if (newSnapshot) {
 						const current = store.getSnapshot()
@@ -120,8 +122,16 @@ export function useSupabasePersistence() {
 					}
 				}
 			)
-			.subscribe((status) => {
-				console.log('useSupabasePersistence: Subscription status:', status)
+			.subscribe((status, err) => {
+				console.log('useSupabasePersistence: Subscription Status:', status)
+				if (err) {
+					console.error('useSupabasePersistence: Subscription Error Detail:', err)
+					setLoadingState(prev => ({ ...prev, error: `Realtime Error: ${status}` }))
+				}
+				
+				if (status === 'CHANNEL_ERROR') {
+					console.warn('useSupabasePersistence: CHANNEL_ERROR detected. Please check if Realtime is enabled in Supabase for the "drawings" table.')
+				}
 			})
 
 		return () => {
