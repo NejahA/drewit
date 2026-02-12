@@ -13,6 +13,7 @@ export function usePusherPersistence() {
 	})
 	const pusherRef = useRef<Pusher | null>(null)
 	const isUpdatingFromRemote = useRef(false)
+	const lastUpdateTimestamp = useRef(0)
 
 	useEffect(() => {
 		// 1. Initial Load from DB (via existing API)
@@ -25,6 +26,7 @@ export function usePusherPersistence() {
 						isUpdatingFromRemote.current = true
 						store.loadSnapshot(snapshot)
 						isUpdatingFromRemote.current = false
+						lastUpdateTimestamp.current = Date.now()
 					}
 				}
 				setLoadingState({ status: 'ready' })
@@ -49,11 +51,19 @@ export function usePusherPersistence() {
 
 		const channel = pusher.subscribe(`drawing-${DRAWING_ID}`)
 		
-		channel.bind('drawing-update', (data: { snapshot: any }) => {
-			console.log('PusherPersistence: Received remote update')
-			isUpdatingFromRemote.current = true
-			store.loadSnapshot(data.snapshot)
-			isUpdatingFromRemote.current = false
+		channel.bind('drawing-update', (data: { snapshot: any; timestamp: number }) => {
+			const { snapshot: newSnapshot, timestamp: remoteTimestamp } = data
+			
+			if (newSnapshot && remoteTimestamp > lastUpdateTimestamp.current) {
+				const current = store.getSnapshot()
+				if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
+					console.log('PusherPersistence: Syncing remote update (Newer TS)')
+					isUpdatingFromRemote.current = true
+					store.loadSnapshot(newSnapshot)
+					isUpdatingFromRemote.current = false
+					lastUpdateTimestamp.current = remoteTimestamp
+				}
+			}
 		})
 
 		return () => {
@@ -68,20 +78,28 @@ export function usePusherPersistence() {
 		const sendUpdate = throttle(async () => {
 			if (isUpdatingFromRemote.current) return
 			
+			const socketId = pusherRef.current?.connection.socket_id
 			const snapshot = store.getSnapshot()
-			console.log('PusherPersistence: Sending update...')
+			const timestamp = Date.now()
+			lastUpdateTimestamp.current = timestamp
+			
+			console.log('PusherPersistence: Sending update...', socketId ? `(Excl: ${socketId})` : '')
 			
 			try {
-				// We trigger a serverless function that then triggers Pusher
 				await fetch('/api/pusher-trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ id: DRAWING_ID, snapshot }),
+					body: JSON.stringify({ 
+						id: DRAWING_ID, 
+						snapshot,
+						socketId: socketId,
+						timestamp: timestamp
+					}),
 				})
 			} catch (err) {
 				console.error('PusherPersistence: Sync error:', err)
 			}
-		}, 150) // Fast sync
+		}, 150)
 
 		const unsubscribe = store.listen((update) => {
 			if (update.source === 'user') {
