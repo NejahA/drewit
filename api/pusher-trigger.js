@@ -39,7 +39,8 @@ export default async function handler(req, res) {
     );
     
     if (result) {
-      console.log(`[Pusher] DB Update Successful for ${id}`);
+      const size = snapshot ? JSON.stringify(snapshot).length : 0;
+      console.log(`[Pusher] DB Update Successful for ${id} (Size: ${size} bytes)`);
     }
 
     // 2. Trigger Pusher Event (Exclude sender if socketId is provided)

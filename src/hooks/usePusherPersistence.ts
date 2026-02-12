@@ -6,6 +6,31 @@ const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY
 const PUSHER_CLUSTER = import.meta.env.VITE_PUSHER_CLUSTER
 const DRAWING_ID = 'global-canvas'
 
+// Helper to filter out instance-specific records (camera, selection, etc.)
+function filterSnapshot(snapshot: any) {
+	if (!snapshot || !snapshot.store) return snapshot
+	
+	const filteredStore: Record<string, any> = {}
+	for (const [id, record] of Object.entries(snapshot.store)) {
+		const type = (record as any).typeName
+		// Keep shapes, assets, and document globals
+		// Exclude everything that is instance-specific (camera, pointer, selection, etc.)
+		if (
+			type === 'shape' || 
+			type === 'asset' || 
+			type === 'document' || 
+			type === 'page'
+		) {
+			filteredStore[id] = record
+		}
+	}
+	
+	return {
+		...snapshot,
+		store: filteredStore
+	}
+}
+
 export function usePusherPersistence() {
 	const [store] = useState(() => createTLStore({ shapeUtils: defaultShapeUtils }))
 	const [loadingState, setLoadingState] = useState<{ status: 'loading' | 'ready' | 'error'; error?: string }>({
@@ -16,13 +41,15 @@ export function usePusherPersistence() {
 	const lastUpdateTimestamp = useRef(0)
 
 	useEffect(() => {
-		// 1. Initial Load from DB (via existing API)
+		// 1. Initial Load from DB
 		async function loadInitial() {
 			try {
 				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
 				if (response.ok) {
-					const snapshot = await response.json()
-					if (snapshot) {
+					const rawSnapshot = await response.json()
+					if (rawSnapshot) {
+						// Filter initial load too so we don't start at some weird camera pos
+						const snapshot = filterSnapshot(rawSnapshot)
 						isUpdatingFromRemote.current = true
 						store.loadSnapshot(snapshot)
 						isUpdatingFromRemote.current = false
@@ -38,26 +65,24 @@ export function usePusherPersistence() {
 		loadInitial()
 
 		// 2. Pusher Setup
-		if (!PUSHER_KEY || !PUSHER_CLUSTER) {
-			console.warn('Pusher keys missing. Real-time sync disabled.')
-			return
-		}
+		if (!PUSHER_KEY || !PUSHER_CLUSTER) return
 
-		console.log('PusherPersistence: Connecting to Pusher...')
-		const pusher = new Pusher(PUSHER_KEY, {
-			cluster: PUSHER_CLUSTER,
-		})
+		const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER })
 		pusherRef.current = pusher
 
 		const channel = pusher.subscribe(`drawing-${DRAWING_ID}`)
 		
 		channel.bind('drawing-update', (data: { snapshot: any; timestamp: number }) => {
-			const { snapshot: newSnapshot, timestamp: remoteTimestamp } = data
+			const { snapshot: rawSnapshot, timestamp: remoteTimestamp } = data
 			
-			if (newSnapshot && remoteTimestamp > lastUpdateTimestamp.current) {
-				const current = store.getSnapshot()
-				if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
-					console.log('PusherPersistence: Syncing remote update (Newer TS)')
+			if (rawSnapshot && remoteTimestamp > lastUpdateTimestamp.current) {
+				// Filter incoming snapshot to preserve local camera
+				const newSnapshot = filterSnapshot(rawSnapshot)
+				const current = filterSnapshot(store.getSnapshot())
+				
+				// Deep string comparison (simple but works for shapes)
+				if (JSON.stringify(newSnapshot.store) !== JSON.stringify(current.store)) {
+					console.log('PusherPersistence: Syncing remote update (Newer TS, Filtered)')
 					isUpdatingFromRemote.current = true
 					store.loadSnapshot(newSnapshot)
 					isUpdatingFromRemote.current = false
@@ -79,7 +104,8 @@ export function usePusherPersistence() {
 			if (isUpdatingFromRemote.current) return
 			
 			const socketId = pusherRef.current?.connection.socket_id
-			const snapshot = store.getSnapshot()
+			// Filter outgoing snapshot to reduce payload and prevent syncing camera
+			const snapshot = filterSnapshot(store.getSnapshot())
 			const timestamp = Date.now()
 			lastUpdateTimestamp.current = timestamp
 			
