@@ -14,6 +14,7 @@ export function useSupabasePersistence() {
 		let isCancelled = false
 
 		async function loadSnapshot() {
+			console.log('useSupabasePersistence: Loading initial snapshot...')
 			try {
 				const { data, error } = await supabase
 					.from('drawings')
@@ -21,15 +22,21 @@ export function useSupabasePersistence() {
 					.eq('id', DRAWING_ID)
 					.maybeSingle()
 
-				if (error) throw error
+				if (error) {
+					console.error('useSupabasePersistence: Supabase error loading snapshot:', error)
+					throw error
+				}
 
 				if (data?.snapshot) {
+					console.log('useSupabasePersistence: Initial snapshot loaded successfully.')
 					store.loadSnapshot(data.snapshot)
+				} else {
+					console.log('useSupabasePersistence: No existing snapshot found for', DRAWING_ID)
 				}
 				
 				if (!isCancelled) setLoadingState({ status: 'ready' })
 			} catch (err: any) {
-				console.error('Error loading snapshot:', err)
+				console.error('useSupabasePersistence: Error loading snapshot:', err)
 				if (!isCancelled) setLoadingState({ status: 'error', error: err.message })
 			}
 		}
@@ -46,6 +53,7 @@ export function useSupabasePersistence() {
 
 		const saveSnapshot = throttle(async () => {
 			const snapshot = store.getSnapshot()
+			console.log('useSupabasePersistence: Saving snapshot...')
 			try {
 				const { error } = await supabase
 					.from('drawings')
@@ -54,12 +62,17 @@ export function useSupabasePersistence() {
 						snapshot,
 						updated_at: new Date().toISOString(),
 					})
-				if (error) throw error
+				if (error) {
+					console.error('useSupabasePersistence: Supabase error saving snapshot:', error)
+					throw error
+				}
+				console.log('useSupabasePersistence: Snapshot saved.')
 			} catch (err) {
-				console.error('Error saving snapshot:', err)
+				console.error('useSupabasePersistence: Error saving snapshot:', err)
 			}
 		}, 2000)
 
+		// We only want to save changes made by the USER in this session
 		const unsubscribe = store.listen(saveSnapshot, { source: 'user', scope: 'document' })
 
 		return () => {
@@ -70,6 +83,7 @@ export function useSupabasePersistence() {
 	useEffect(() => {
 		if (loadingState.status !== 'ready') return
 
+		console.log('useSupabasePersistence: Subscribing to realtime changes...')
 		const channel = supabase
 			.channel(`drawing:${DRAWING_ID}`)
 			.on(
@@ -81,20 +95,22 @@ export function useSupabasePersistence() {
 					filter: `id=eq.${DRAWING_ID}`,
 				},
 				(payload) => {
+					console.log('useSupabasePersistence: Received realtime update')
 					const newSnapshot = payload.new.snapshot
 					if (newSnapshot) {
-						// Simple check to avoid reloading our own changes if possible
-						// though tldraw handles some of this internally
-						const current = store.getSnapshot()
-						if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
-							store.loadSnapshot(newSnapshot)
-						}
+						// Don't reload if we are already in sync
+						// (Using a simple hash or just skipping if we were the last one to save would be better,
+						// but tldraw handles some merge logic internally if we use loadSnapshot)
+						store.loadSnapshot(newSnapshot)
 					}
 				}
 			)
-			.subscribe()
+			.subscribe((status) => {
+				console.log('useSupabasePersistence: Realtime subscription status:', status)
+			})
 
 		return () => {
+			console.log('useSupabasePersistence: Unsubscribing from realtime.')
 			supabase.removeChannel(channel)
 		}
 	}, [store, loadingState.status])

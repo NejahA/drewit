@@ -40,14 +40,21 @@ export function useMongoosePersistence() {
 
 		const saveSnapshot = throttle(async () => {
 			const snapshot = store.getSnapshot()
+			console.log('Persistence: Saving snapshot to MongoDB...')
 			try {
-				await fetch('/api/drawing', {
+				const response = await fetch('/api/drawing', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ id: DRAWING_ID, snapshot }),
 				})
+				if (!response.ok) {
+					const errorData = await response.json()
+					console.error('Persistence: Save failed:', errorData)
+				} else {
+					console.log('Persistence: Snapshot saved successfully.')
+				}
 			} catch (err) {
-				console.error('Error saving snapshot:', err)
+				console.error('Persistence: Error saving snapshot:', err)
 			}
 		}, 2000)
 
@@ -62,22 +69,28 @@ export function useMongoosePersistence() {
 		if (loadingState.status !== 'ready') return
 
 		let isCancelled = false
+		let isFetching = false
 
 		async function pollServer() {
+			if (isFetching) return
+			isFetching = true
 			try {
 				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
 				if (response.ok) {
 					const snapshot = await response.json()
 					if (snapshot && !isCancelled) {
-						// Only load if different to minimize disruption
 						const current = store.getSnapshot()
+						// More robust comparison to avoid flickering
 						if (JSON.stringify(snapshot) !== JSON.stringify(current)) {
+							console.log('Persistence: Remote changes detected, loading snapshot...')
 							store.loadSnapshot(snapshot)
 						}
 					}
 				}
 			} catch (err) {
-				console.error('Polling error:', err)
+				console.error('Persistence: Polling error:', err)
+			} finally {
+				isFetching = false
 			}
 		}
 

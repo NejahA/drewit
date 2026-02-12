@@ -25,16 +25,19 @@ export default async function handler(req, res) {
 
       case 'POST':
         try {
+          console.log(`[POST] Saving snapshot for id: ${id}, snapshot size: ${snapshot ? JSON.stringify(snapshot).length : 0} bytes`);
           if (!snapshot) {
             return res.status(400).json({ error: 'Snapshot is required' });
           }
           const updatedDrawing = await Drawing.findOneAndUpdate(
             { id },
             { snapshot },
-            { upsert: true, new: true }
+            { upsert: true, new: true, setDefaultsOnInsert: true }
           );
+          console.log(`[POST] Successfully saved drawing for id: ${id}`);
           res.status(200).json(updatedDrawing);
         } catch (err) {
+          console.error(`[POST] Error saving drawing for id ${id}:`, err);
           res.status(500).json({ error: `POST Error: ${err.message}` });
         }
         break;

@@ -9,11 +9,12 @@ const DrawingSchema = new mongoose.Schema({
     default: 'global-canvas'
   },
   snapshot: {
-    type: Object,
+    type: mongoose.Schema.Types.Mixed,
     required: true
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  strict: false
 });
 
 const Drawing = mongoose.models.Drawing || mongoose.model('Drawing', DrawingSchema);
