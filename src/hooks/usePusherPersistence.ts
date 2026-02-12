@@ -6,31 +6,6 @@ const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY
 const PUSHER_CLUSTER = import.meta.env.VITE_PUSHER_CLUSTER
 const DRAWING_ID = 'global-canvas'
 
-// Helper to filter out instance-specific records (camera, selection, etc.)
-function filterSnapshot(snapshot: any) {
-	if (!snapshot || !snapshot.store) return snapshot
-	
-	const filteredStore: Record<string, any> = {}
-	for (const [id, record] of Object.entries(snapshot.store)) {
-		const type = (record as any).typeName
-		// Keep shapes, assets, and document globals
-		// Exclude everything that is instance-specific (camera, pointer, selection, etc.)
-		if (
-			type === 'shape' || 
-			type === 'asset' || 
-			type === 'document' || 
-			type === 'page'
-		) {
-			filteredStore[id] = record
-		}
-	}
-	
-	return {
-		...snapshot,
-		store: filteredStore
-	}
-}
-
 export function usePusherPersistence() {
 	const [store] = useState(() => createTLStore({ shapeUtils: defaultShapeUtils }))
 	const [loadingState, setLoadingState] = useState<{ status: 'loading' | 'ready' | 'error'; error?: string }>({
@@ -38,7 +13,6 @@ export function usePusherPersistence() {
 	})
 	const pusherRef = useRef<Pusher | null>(null)
 	const isUpdatingFromRemote = useRef(false)
-	const lastUpdateTimestamp = useRef(0)
 
 	useEffect(() => {
 		// 1. Initial Load from DB
@@ -46,14 +20,11 @@ export function usePusherPersistence() {
 			try {
 				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
 				if (response.ok) {
-					const rawSnapshot = await response.json()
-					if (rawSnapshot) {
-						// Filter initial load too so we don't start at some weird camera pos
-						const snapshot = filterSnapshot(rawSnapshot)
+					const snapshot = await response.json()
+					if (snapshot) {
 						isUpdatingFromRemote.current = true
 						store.loadSnapshot(snapshot)
 						isUpdatingFromRemote.current = false
-						lastUpdateTimestamp.current = Date.now()
 					}
 				}
 				setLoadingState({ status: 'ready' })
@@ -72,23 +43,28 @@ export function usePusherPersistence() {
 
 		const channel = pusher.subscribe(`drawing-${DRAWING_ID}`)
 		
-		channel.bind('drawing-update', (data: { snapshot: any; timestamp: number }) => {
-			const { snapshot: rawSnapshot, timestamp: remoteTimestamp } = data
-			
-			if (rawSnapshot && remoteTimestamp > lastUpdateTimestamp.current) {
-				// Filter incoming snapshot to preserve local camera
-				const newSnapshot = filterSnapshot(rawSnapshot)
-				const current = filterSnapshot(getSnapshot(store))
+		channel.bind('drawing-diff', (data: { changes: any }) => {
+			console.log('PusherPersistence: Received incremental sync')
+			isUpdatingFromRemote.current = true
+			store.mergeRemoteChanges(() => {
+				const { added, updated, removed } = data.changes
 				
-				// Deep string comparison (simple but works for shapes)
-				if (JSON.stringify(newSnapshot.store) !== JSON.stringify(current.store)) {
-					console.log('PusherPersistence: Syncing remote update (Newer TS, Filtered)')
-					isUpdatingFromRemote.current = true
-					store.loadSnapshot(newSnapshot)
-					isUpdatingFromRemote.current = false
-					lastUpdateTimestamp.current = remoteTimestamp
+				// Apply removals
+				for (const [id, _] of Object.entries(removed)) {
+					store.remove([id as any])
 				}
-			}
+				
+				// Apply additions and updates
+				const toPut = [
+					...Object.values(added),
+					...Object.values(updated).map((u: any) => u[1]) // updated is [old, new]
+				]
+				
+				if (toPut.length > 0) {
+					store.put(toPut as any[])
+				}
+			})
+			isUpdatingFromRemote.current = false
 		})
 
 		return () => {
@@ -100,36 +76,73 @@ export function usePusherPersistence() {
 	useEffect(() => {
 		if (loadingState.status !== 'ready') return
 
-		const sendUpdate = throttle(async () => {
+		// Throttled persistence to DB (Full Snapshot)
+		const saveToDb = throttle(async () => {
 			if (isUpdatingFromRemote.current) return
-			
+			const snapshot = getSnapshot(store)
+			try {
+				await fetch('/api/drawing', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ id: DRAWING_ID, snapshot }),
+				})
+				console.log('PusherPersistence: Saved full snapshot to DB')
+			} catch (err) {
+				console.error('PusherPersistence: DB Save Error:', err)
+			}
+		}, 3000)
+
+		// Throttled Broadcast of Diffs
+		let pendingChanges: any = { added: {}, updated: {}, removed: {} }
+		
+		const flushBroadcast = throttle(async () => {
 			const socketId = pusherRef.current?.connection.socket_id
-			// Filter outgoing snapshot to reduce payload and prevent syncing camera
-			const snapshot = filterSnapshot(getSnapshot(store))
-			const timestamp = Date.now()
-			lastUpdateTimestamp.current = timestamp
-			
-			console.log('PusherPersistence: Sending update...', socketId ? `(Excl: ${socketId})` : '')
-			
+			const changesToSend = { ...pendingChanges }
+			pendingChanges = { added: {}, updated: {}, removed: {} }
+
+			if (
+				Object.keys(changesToSend.added).length === 0 &&
+				Object.keys(changesToSend.updated).length === 0 &&
+				Object.keys(changesToSend.removed).length === 0
+			) return
+
 			try {
 				await fetch('/api/pusher-trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ 
 						id: DRAWING_ID, 
-						snapshot,
-						socketId: socketId,
-						timestamp: timestamp
+						changes: changesToSend,
+						socketId 
 					}),
 				})
 			} catch (err) {
-				console.error('PusherPersistence: Sync error:', err)
+				console.error('PusherPersistence: Broadcast Error:', err)
 			}
-		}, 150)
+		}, 60) // High frequency for smooth sync
 
 		const unsubscribe = store.listen((update) => {
 			if (update.source === 'user') {
-				sendUpdate()
+				// Accumulate only relevant changes (shapes, assets, etc.)
+				for (const [id, record] of Object.entries(update.changes.added)) {
+					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+						pendingChanges.added[id] = record
+					}
+				}
+				for (const [id, record] of Object.entries(update.changes.updated)) {
+					const newVal = record[1]
+					if ((newVal as any).typeName === 'shape' || (newVal as any).typeName === 'asset') {
+						pendingChanges.updated[id] = record
+					}
+				}
+				for (const [id, record] of Object.entries(update.changes.removed)) {
+					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+						pendingChanges.removed[id] = record
+					}
+				}
+
+				flushBroadcast()
+				saveToDb()
 			}
 		}, { scope: 'document' })
 
