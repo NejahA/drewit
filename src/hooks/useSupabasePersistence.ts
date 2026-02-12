@@ -51,9 +51,15 @@ export function useSupabasePersistence() {
 	useEffect(() => {
 		if (loadingState.status !== 'ready') return
 
-		const saveSnapshot = throttle(async () => {
+		const channel = supabase.channel(`canvas:${DRAWING_ID}`, {
+			config: {
+				broadcast: { self: false },
+			},
+		})
+
+		const saveToDb = throttle(async () => {
 			const snapshot = store.getSnapshot()
-			console.log('useSupabasePersistence: Saving snapshot...')
+			console.log('useSupabasePersistence: Saving to DB...')
 			try {
 				const { error } = await supabase
 					.from('drawings')
@@ -62,30 +68,39 @@ export function useSupabasePersistence() {
 						snapshot,
 						updated_at: new Date().toISOString(),
 					})
-				if (error) {
-					console.error('useSupabasePersistence: Supabase error saving snapshot:', error)
-					throw error
-				}
-				console.log('useSupabasePersistence: Snapshot saved.')
+				if (error) throw error
 			} catch (err) {
-				console.error('useSupabasePersistence: Error saving snapshot:', err)
+				console.error('useSupabasePersistence: DB Save Error:', err)
 			}
 		}, 2000)
 
-		// We only want to save changes made by the USER in this session
-		const unsubscribe = store.listen(saveSnapshot, { source: 'user', scope: 'document' })
+		const broadcastUpdate = throttle(() => {
+			console.log('useSupabasePersistence: Broadcasting update...')
+			channel.send({
+				type: 'broadcast',
+				event: 'canvas-update',
+				payload: { snapshot: store.getSnapshot() },
+			})
+		}, 100) // Fast throttle for broadcast
 
-		return () => {
-			unsubscribe()
-		}
-	}, [store, loadingState.status])
+		const unsubscribe = store.listen((update) => {
+			if (update.source === 'user') {
+				broadcastUpdate()
+				saveToDb()
+			}
+		}, { scope: 'document' })
 
-	useEffect(() => {
-		if (loadingState.status !== 'ready') return
-
-		console.log('useSupabasePersistence: Subscribing to realtime changes...')
-		const channel = supabase
-			.channel(`drawing:${DRAWING_ID}`)
+		channel
+			.on('broadcast', { event: 'canvas-update' }, ({ payload }) => {
+				console.log('useSupabasePersistence: Received broadcast update')
+				const newSnapshot = payload.snapshot
+				if (newSnapshot) {
+					const current = store.getSnapshot()
+					if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
+						store.loadSnapshot(newSnapshot)
+					}
+				}
+			})
 			.on(
 				'postgres_changes',
 				{
@@ -95,24 +110,22 @@ export function useSupabasePersistence() {
 					filter: `id=eq.${DRAWING_ID}`,
 				},
 				(payload) => {
-					console.log('useSupabasePersistence: Received realtime update')
+					console.log('useSupabasePersistence: Received DB fallback update')
 					const newSnapshot = payload.new.snapshot
 					if (newSnapshot) {
-						// Don't reload if we are already in sync
 						const current = store.getSnapshot()
 						if (JSON.stringify(newSnapshot) !== JSON.stringify(current)) {
-							console.log('useSupabasePersistence: Syncing remote changes...')
 							store.loadSnapshot(newSnapshot)
 						}
 					}
 				}
 			)
 			.subscribe((status) => {
-				console.log('useSupabasePersistence: Realtime subscription status:', status)
+				console.log('useSupabasePersistence: Subscription status:', status)
 			})
 
 		return () => {
-			console.log('useSupabasePersistence: Unsubscribing from realtime.')
+			unsubscribe()
 			supabase.removeChannel(channel)
 		}
 	}, [store, loadingState.status])
