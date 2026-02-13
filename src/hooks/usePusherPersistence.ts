@@ -37,7 +37,8 @@ export function usePusherPersistence() {
 					} else {
 						console.warn('PusherPersistence: Invalid or missing snapshot. Initializing fresh state...')
 						// Force overwrite the bad data with a fresh snapshot immediately
-						const freshSnapshot = getSnapshot(store)
+						// Use serialize() instead of getSnapshot() to avoid "Session state not ready"
+						const freshSnapshot = store.serialize()
 						try {
 							await fetch('/api/drawing', {
 								method: 'POST',
