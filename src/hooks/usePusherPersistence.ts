@@ -15,9 +15,10 @@ export function usePusherPersistence() {
 	const isUpdatingFromRemote = useRef(false)
 
 	useEffect(() => {
-		// 1. Initial Load from DB
-		async function loadInitial() {
+		// 1. Load from DB (Reusable)
+		async function loadFromDb(isReload = false) {
 			try {
+				if (isReload) console.log('PusherPersistence: Reloading from DB...')
 				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
 				if (response.ok) {
 					const snapshot = await response.json()
@@ -29,11 +30,11 @@ export function usePusherPersistence() {
 				}
 				setLoadingState({ status: 'ready' })
 			} catch (err: any) {
-				console.error('PusherPersistence: Initial load error:', err)
-				setLoadingState({ status: 'error', error: err.message })
+				console.error('PusherPersistence: Load error:', err)
+				if (!isReload) setLoadingState({ status: 'error', error: err.message })
 			}
 		}
-		loadInitial()
+		loadFromDb()
 
 		// 2. Pusher Setup
 		if (!PUSHER_KEY || !PUSHER_CLUSTER) return
@@ -43,6 +44,7 @@ export function usePusherPersistence() {
 
 		const channel = pusher.subscribe(`drawing-${DRAWING_ID}`)
 		
+		// Handle Incremental Diffs
 		channel.bind('drawing-diff', (data: { changes: any }) => {
 			console.log('PusherPersistence: Received incremental sync')
 			isUpdatingFromRemote.current = true
@@ -67,6 +69,11 @@ export function usePusherPersistence() {
 			isUpdatingFromRemote.current = false
 		})
 
+		// Handle Full Reload Signal (for large assets)
+		channel.bind('drawing-reload', () => {
+			loadFromDb(true)
+		})
+
 		return () => {
 			pusher.unsubscribe(`drawing-${DRAWING_ID}`)
 			pusher.disconnect()
@@ -77,16 +84,22 @@ export function usePusherPersistence() {
 		if (loadingState.status !== 'ready') return
 
 		// Throttled persistence to DB (Full Snapshot)
-		const saveToDb = throttle(async () => {
-			if (isUpdatingFromRemote.current) return
+		const saveToDb = throttle(async (isImmediate = false) => {
+			if (isUpdatingFromRemote.current && !isImmediate) return
 			const snapshot = getSnapshot(store)
+			const socketId = pusherRef.current?.connection.socket_id
 			try {
-				await fetch('/api/drawing', {
+				await fetch('/api/pusher-trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ id: DRAWING_ID, snapshot }),
+					body: JSON.stringify({ 
+						id: DRAWING_ID, 
+						snapshot, 
+						triggerReload: isImmediate,
+						socketId 
+					}),
 				})
-				console.log('PusherPersistence: Saved full snapshot to DB')
+				console.log('PusherPersistence: Saved full snapshot to DB', isImmediate ? '(Immediate/Asset)' : '')
 			} catch (err) {
 				console.error('PusherPersistence: DB Save Error:', err)
 			}
@@ -123,16 +136,22 @@ export function usePusherPersistence() {
 
 		const unsubscribe = store.listen((update) => {
 			if (update.source === 'user') {
+				let hasAsset = false
+
 				// Accumulate only relevant changes (shapes, assets, etc.)
 				for (const [id, record] of Object.entries(update.changes.added)) {
-					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+					const type = (record as any).typeName
+					if (type === 'shape' || type === 'asset') {
 						pendingChanges.added[id] = record
+						if (type === 'asset') hasAsset = true
 					}
 				}
 				for (const [id, record] of Object.entries(update.changes.updated)) {
 					const newVal = record[1]
-					if ((newVal as any).typeName === 'shape' || (newVal as any).typeName === 'asset') {
+					const type = (newVal as any).typeName
+					if (type === 'shape' || type === 'asset') {
 						pendingChanges.updated[id] = record
+						if (type === 'asset') hasAsset = true
 					}
 				}
 				for (const [id, record] of Object.entries(update.changes.removed)) {
@@ -141,8 +160,13 @@ export function usePusherPersistence() {
 					}
 				}
 
-				flushBroadcast()
-				saveToDb()
+				// If an asset was added/updated, trigger a full DB save and reload signal
+				if (hasAsset) {
+					saveToDb(true) // Immediate save with reload trigger
+				} else {
+					flushBroadcast()
+					saveToDb()
+				}
 			}
 		}, { scope: 'document' })
 

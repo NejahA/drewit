@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { id, snapshot, changes, socketId } = req.body;
+  const { id, snapshot, changes, socketId, triggerReload } = req.body;
   
   if (!PUSHER_APP_ID || !PUSHER_SECRET) {
     return res.status(500).json({ error: 'Pusher server-side configuration missing' });
@@ -37,7 +37,14 @@ export default async function handler(req, res) {
       console.log(`[Pusher] Persisted full snapshot for ${id}`);
     }
 
-    // 2. If changes (diff) are provided, broadcast via Pusher (Real-time sync)
+    // 2. If triggerReload is true, broadcast a global reload signal
+    if (triggerReload) {
+      const pusherOptions = socketId ? { socket_id: socketId } : {};
+      await pusher.trigger(`drawing-${id}`, 'drawing-reload', {}, pusherOptions);
+      console.log(`[Pusher] Broadcasted RELOAD signal for ${id}`);
+    }
+
+    // 3. If changes (diff) are provided, broadcast via Pusher (Real-time sync)
     if (changes) {
       const pusherOptions = socketId ? { socket_id: socketId } : {};
       
