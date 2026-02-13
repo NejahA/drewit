@@ -1,10 +1,40 @@
-import { createTLStore, defaultShapeUtils, getSnapshot, throttle } from 'tldraw'
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { createTLStore, defaultShapeUtils, getSnapshot } from 'tldraw'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import Pusher from 'pusher-js'
 
 const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY
 const PUSHER_CLUSTER = import.meta.env.VITE_PUSHER_CLUSTER
 const DRAWING_ID = 'global-canvas'
+
+// Custom throttler that ensures the LAST call is always executed (trailing edge)
+function createThrottler(delay: number) {
+	let lastCall = 0
+	let timeout: any = null
+	let pendingArgs: any[] | null = null
+
+	return function(fn: (...args: any[]) => void) {
+		return function(this: any, ...args: any[]) {
+			const now = Date.now()
+			pendingArgs = args
+
+			const execute = () => {
+				lastCall = Date.now()
+				timeout = null
+				if (pendingArgs) {
+					fn.apply(this, pendingArgs)
+					pendingArgs = null
+				}
+			}
+
+			if (now - lastCall >= delay) {
+				if (timeout) clearTimeout(timeout)
+				execute()
+			} else if (!timeout) {
+				timeout = setTimeout(execute, delay - (now - lastCall))
+			}
+		}
+	}
+}
 
 export function usePusherPersistence() {
 	const [store] = useState(() => createTLStore({ shapeUtils: defaultShapeUtils }))
@@ -17,54 +47,66 @@ export function usePusherPersistence() {
 	const isDirtyRef = useRef(false)
 	const pendingChangesRef = useRef<any>({ added: {}, updated: {}, removed: {} })
 
-	// --- Throttled Functions (Memoized for stability) ---
-	
-	const saveToDb = useMemo(() => throttle(async (snapshot: any, isImmediate = false) => {
-		if (isUpdatingFromRemote.current && !isImmediate) return
+	// --- Core Persistence Logic ---
+
+	const doSaveToDb = useCallback(async (isImmediate = false) => {
+		if (!isDirtyRef.current || (isUpdatingFromRemote.current && !isImmediate)) return
 		
-		console.log('PusherPersistence: Saving to DB...', isImmediate ? '(Immediate/Asset)' : '')
+		const snapshot = getSnapshot(store)
+		if (!snapshot || Object.keys(snapshot.store).length === 0) {
+			console.warn('PusherPersistence: Skipping save of empty snapshot')
+			return
+		}
+
+		console.log('PusherPersistence: Saving to DB...', isImmediate ? '(Immediate)' : '')
+		
 		try {
-			const response = await fetch('/api/pusher-trigger', {
+			const response = await fetch('/api/drawing', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ 
-					id: DRAWING_ID, 
-					snapshot, 
-					triggerReload: isImmediate,
-					socketId: pusherRef.current?.connection.socket_id 
-				}),
+				body: JSON.stringify({ id: DRAWING_ID, snapshot }),
 			})
 			
 			if (response.ok) {
 				isDirtyRef.current = false
 				console.log('PusherPersistence: DB Save Successful')
+				
+				if (isImmediate) {
+					fetch('/api/pusher-trigger', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ 
+							id: DRAWING_ID, 
+							triggerReload: true, 
+							socketId: pusherRef.current?.connection.socket_id 
+						}),
+					}).catch(console.error)
+				}
 			} else {
-				const err = await response.json()
-				console.error('PusherPersistence: DB Save Failed:', err)
+				console.error('PusherPersistence: DB Save Failed:', await response.text())
 			}
 		} catch (err) {
 			console.error('PusherPersistence: DB Save Network Error:', err)
 		}
-	}, 3000), [])
+	}, [store])
 
-	const broadcastDiff = useMemo(() => throttle(async (changes: any) => {
-		const socketId = pusherRef.current?.connection.socket_id
-		if (
-			Object.keys(changes.added).length === 0 &&
-			Object.keys(changes.updated).length === 0 &&
-			Object.keys(changes.removed).length === 0
-		) return
-
+	const throttledSave = useRef(createThrottler(3000)(doSaveToDb)).current
+	
+	const throttledBroadcast = useRef(createThrottler(60)(async (changes: any) => {
 		try {
 			await fetch('/api/pusher-trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: DRAWING_ID, changes, socketId }),
+				body: JSON.stringify({ 
+					id: DRAWING_ID, 
+					changes, 
+					socketId: pusherRef.current?.connection.socket_id 
+				}),
 			})
 		} catch (err) {
 			console.error('PusherPersistence: Broadcast Error:', err)
 		}
-	}, 60), [])
+	})).current
 
 	// --- Effects ---
 
@@ -75,10 +117,13 @@ export function usePusherPersistence() {
 				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
 				if (response.ok) {
 					const snapshot = await response.json()
-					if (snapshot) {
+					if (snapshot && Object.keys(snapshot.store).length > 0) {
 						isUpdatingFromRemote.current = true
 						store.loadSnapshot(snapshot)
 						isUpdatingFromRemote.current = false
+						console.log('PusherPersistence: Loaded store from DB')
+					} else {
+						console.log('PusherPersistence: DB empty or null, keeping local state')
 					}
 				}
 				setLoadingState({ status: 'ready' })
@@ -146,22 +191,23 @@ export function usePusherPersistence() {
 				}
 
 				if (hasAsset) {
-					saveToDb(getSnapshot(store), true)
+					doSaveToDb(true)
 				} else {
 					const diff = { ...pendingChangesRef.current }
 					pendingChangesRef.current = { added: {}, updated: {}, removed: {} }
-					broadcastDiff(diff)
-					saveToDb(getSnapshot(store))
+					throttledBroadcast(diff)
+					throttledSave()
 				}
 			}
 		}, { scope: 'document' })
 
-		// Flush unsaved changes on refresh/close
-		const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+		const handleBeforeUnload = () => {
 			if (isDirtyRef.current) {
-				saveToDb(getSnapshot(store), true) // Try one last save
-				e.preventDefault()
-				e.returnValue = ''
+				const snapshot = getSnapshot(store)
+				if (snapshot && Object.keys(snapshot.store).length > 0) {
+					const blob = new Blob([JSON.stringify({ id: DRAWING_ID, snapshot })], { type: 'application/json' })
+					navigator.sendBeacon('/api/drawing', blob)
+				}
 			}
 		}
 		window.addEventListener('beforeunload', handleBeforeUnload)
@@ -170,7 +216,7 @@ export function usePusherPersistence() {
 			unsubscribe()
 			window.removeEventListener('beforeunload', handleBeforeUnload)
 		}
-	}, [store, loadingState.status, saveToDb, broadcastDiff])
+	}, [store, loadingState.status, doSaveToDb, throttledSave, throttledBroadcast])
 
 	return { store, loadingState }
 }
