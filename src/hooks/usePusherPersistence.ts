@@ -22,29 +22,33 @@ export function usePusherPersistence() {
 				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
 				if (response.ok) {
 					const snapshot = await response.json()
-					if (snapshot) {
-						console.log('PusherPersistence: Snapshot found. Keys:', Object.keys(snapshot))
-						if (snapshot.schema) {
-							console.log('PusherPersistence: Schema present. Version:', snapshot.schema.schemaVersion)
-						} else {
-							console.error('PusherPersistence: CRITICAL - Snapshot missing schema!')
+					if (snapshot && snapshot.schema) {
+						console.log('PusherPersistence: Valid snapshot found. Version:', snapshot.schema.schemaVersion)
+						console.log('PusherPersistence: Loading snapshot into store...')
+						isUpdatingFromRemote.current = true
+						try {
+							store.loadSnapshot(snapshot)
+							console.log('PusherPersistence: Load successful!')
+						} catch (e) {
+							console.error('PusherPersistence: Failed to load snapshot:', e)
+							console.warn('PusherPersistence: Falling back to fresh state.')
 						}
-						
-						if (!snapshot.schema) {
-							console.warn('PusherPersistence: Invalid snapshot (missing schema). Starting fresh.')
-						} else {
-							console.log('PusherPersistence: Loading snapshot into store...')
-							isUpdatingFromRemote.current = true
-							try {
-								store.loadSnapshot(snapshot)
-								console.log('PusherPersistence: Load successful!')
-							} catch (e) {
-								console.error('PusherPersistence: Failed to load snapshot:', e)
-								console.warn('PusherPersistence: Falling back to fresh state.')
-							}
-							isUpdatingFromRemote.current = false
-						}
+						isUpdatingFromRemote.current = false
 					} else {
+						console.warn('PusherPersistence: Invalid or missing snapshot. Initializing fresh state...')
+						// Force overwrite the bad data with a fresh snapshot immediately
+						const freshSnapshot = getSnapshot(store)
+						try {
+							await fetch('/api/drawing', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ id: DRAWING_ID, snapshot: freshSnapshot }),
+							})
+							console.log('PusherPersistence: Fresh snapshot initialized in DB.')
+						} catch (err) {
+							console.error('PusherPersistence: Failed to initialize fresh snapshot:', err)
+						}
+					}
 						console.log('PusherPersistence: No existing snapshot found (New drawing)')
 					}
 				} else {
