@@ -84,11 +84,11 @@ export function useSupabasePersistence() {
 		}, 100)
 
 		const unsubscribe = store.listen((update) => {
-			if (update.source === 'user') {
-				saveToDb()
-				if (channel.state === 'joined') {
-					broadcastUpdate()
-				}
+			if (update.source === 'remote') return
+
+			saveToDb()
+			if (channel.state === 'joined') {
+				broadcastUpdate()
 			}
 		}, { scope: 'document' })
 

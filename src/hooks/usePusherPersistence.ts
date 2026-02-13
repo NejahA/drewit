@@ -131,30 +131,31 @@ export function usePusherPersistence() {
 		}, 60)
 
 		const unsubscribe = store.listen((update) => {
-			if (update.source === 'user') {
-				// 1. Accumulate diffs for Pusher (Shapes & Assets only)
-				for (const [id, record] of Object.entries(update.changes.added)) {
-					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
-						pendingChanges.added[id] = record
-					}
-				}
-				for (const [id, record] of Object.entries(update.changes.updated)) {
-					const newVal = record[1]
-					if ((newVal as any).typeName === 'shape' || (newVal as any).typeName === 'asset') {
-						pendingChanges.updated[id] = record
-					}
-				}
-				for (const [id, record] of Object.entries(update.changes.removed)) {
-					const [id_] = id.split(':')
-					if (id_ === 'shape' || id_ === 'asset') {
-						pendingChanges.removed[id] = record
-					}
-				}
+			// Prevent feedback loops: don't broadcast or save if the update came from Pusher
+			if (update.source === 'remote') return
 
-				flushBroadcast()
-				throttledSave()
+			// 1. Accumulate diffs for Pusher (Shapes & Assets only)
+			for (const [id, record] of Object.entries(update.changes.added)) {
+				if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+					pendingChanges.added[id] = record
+				}
 			}
-		}, { source: 'user', scope: 'all' })
+			for (const [id, record] of Object.entries(update.changes.updated)) {
+				const newVal = record[1]
+				if ((newVal as any).typeName === 'shape' || (newVal as any).typeName === 'asset') {
+					pendingChanges.updated[id] = record
+				}
+			}
+			for (const [id, record] of Object.entries(update.changes.removed)) {
+				const [id_] = id.split(':')
+				if (id_ === 'shape' || id_ === 'asset') {
+					pendingChanges.removed[id] = record
+				}
+			}
+
+			flushBroadcast()
+			throttledSave()
+		}, { scope: 'all' })
 
 		// Force save on window close
 		const handleBeforeUnload = () => {
