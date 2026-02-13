@@ -43,58 +43,6 @@ async function startServer() {
       currentSnapshot = drawing.snapshot;
     }
 
-    // --- REST API for Persistence (Fix for local dev) ---
-
-    app.get('/api/drawing', async (req, res) => {
-      try {
-        const id = req.query.id || DRAWING_ID;
-        const drawing = await Drawing.findOne({ id });
-        res.status(200).json(drawing ? drawing.snapshot : null);
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-
-    app.post('/api/drawing', async (req, res) => {
-      try {
-        const { id = DRAWING_ID, snapshot } = req.body;
-        if (!snapshot) return res.status(400).json({ error: 'Snapshot missing' });
-        
-        await Drawing.findOneAndUpdate(
-          { id },
-          { snapshot },
-          { upsert: true, new: true }
-        );
-        currentSnapshot = snapshot; // Update in-memory for Socket.io users
-        res.status(200).json({ success: true });
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-
-    // Mock/Bridge for Pusher triggers (if user is running locally)
-    app.post('/api/pusher-trigger', async (req, res) => {
-      try {
-        const { id = DRAWING_ID, snapshot, changes, triggerReload, socketId } = req.body;
-        
-        // 1. Persistence
-        if (snapshot) {
-          await Drawing.findOneAndUpdate({ id }, { snapshot }, { upsert: true });
-          currentSnapshot = snapshot;
-        }
-
-        // 2. Real-time Bridge (If Pusher is configured in .env, we could trigger it here)
-        // For now, we respond success so the frontend doesn't error.
-        // If the user has Vercel-like env vars, it will work with the Pusher library.
-        
-        console.log(`[API] Pusher-Trigger: ${snapshot ? 'Snapshot ' : ''}${changes ? 'Changes ' : ''}${triggerReload ? 'Reload' : ''}`);
-        
-        res.status(200).json({ success: true });
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-
     io.on('connection', (socket) => {
       console.log('User connected:', socket.id);
 

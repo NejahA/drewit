@@ -4,20 +4,11 @@ export default async function handler(req, res) {
   try {
     await connectToDatabase();
 
-    const { method, headers } = req;
-    const contentType = headers['content-type'] || 'none';
-    
-    // Parse body if it's potentially a string (from sendBeacon)
-    let body = req.body;
-    if (typeof body === 'string') {
-      try { body = JSON.parse(body); } catch (e) {}
-    }
-    
+    const { method } = req;
     const { id: queryId } = req.query;
-    const { id: bodyId, snapshot } = body || {};
+    const { id: bodyId, snapshot } = req.body || {};
 
     const id = queryId || bodyId || 'global-canvas';
-    console.log(`[Drawing API] ${method} for ${id} (CT: ${contentType})`);
 
     switch (method) {
       case 'GET':

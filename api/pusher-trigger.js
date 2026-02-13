@@ -23,54 +23,38 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { id, snapshot, changes, socketId, triggerReload } = req.body;
+  const { id, snapshot, changes, socketId } = req.body;
   
   if (!PUSHER_APP_ID || !PUSHER_SECRET) {
     return res.status(500).json({ error: 'Pusher server-side configuration missing' });
   }
 
   try {
-    // 1. If snapshot is provided, save to MongoDB (Persistence)
+    // 1. If snapshot is provided, save to MongoDB (Persistence fallback)
     if (snapshot) {
-      const size = JSON.stringify(snapshot).length;
-      console.log(`[Pusher] Attempting to persist ${size} bytes to DB for ${id}`);
-      
-      if (size > 4000000) { // 4MB Warning (Vercel limit is 4.5MB)
-        console.warn(`[Pusher] WARNING: Large payload (${size} bytes). Risk of 413 Payload Too Large.`);
-      }
-
       await connectToDatabase();
-      const result = await Drawing.findOneAndUpdate(
-        { id }, 
-        { snapshot }, 
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
-      
-      if (!result) throw new Error('Failed to update MongoDB document');
-      console.log(`[Pusher] Persisted full snapshot for ${id} (${size} bytes)`);
+      await Drawing.findOneAndUpdate({ id }, { snapshot }, { upsert: true });
+      console.log(`[Pusher] Persisted full snapshot for ${id}`);
     }
 
-    // 2. If triggerReload is true, broadcast a global reload signal
-    if (triggerReload) {
-      const pusherOptions = socketId ? { socket_id: socketId } : {};
-      await pusher.trigger(`drawing-${id}`, 'drawing-reload', {}, pusherOptions);
-      console.log(`[Pusher] Broadcasted RELOAD signal for ${id}`);
-    }
-
-    // 3. If changes (diff) are provided, broadcast via Pusher (Real-time sync)
+    // 2. If changes (diff) are provided, broadcast via Pusher (Real-time sync)
     if (changes) {
       const pusherOptions = socketId ? { socket_id: socketId } : {};
-      await pusher.trigger(`drawing-${id}`, 'drawing-diff', { changes }, pusherOptions);
-      console.log(`[Pusher] Broadcasted incremental diff for ${id}`);
+      
+      // Broadcast the diff to other clients
+      await pusher.trigger(`drawing-${id}`, 'drawing-diff', {
+        changes,
+      }, pusherOptions);
+
+      console.log(`[Pusher] Broadcasted incremental diff for ${id} (Excluded: ${socketId || 'none'})`);
     }
 
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error('[Pusher] ERROR:', err);
+    console.error('[Pusher] Server Error:', err);
     res.status(500).json({ 
-      error: 'Pusher/DB Operation Failed', 
-      details: err.message,
-      code: err.code
+      error: 'Pusher Operation Failed', 
+      details: err.message 
     });
   }
 }
