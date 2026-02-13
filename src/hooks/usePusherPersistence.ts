@@ -49,8 +49,6 @@ export function usePusherPersistence() {
 							console.error('PusherPersistence: Failed to initialize fresh snapshot:', err)
 						}
 					}
-						console.log('PusherPersistence: No existing snapshot found (New drawing)')
-					}
 				} else {
 					console.error('PusherPersistence: Load failed with status:', response.status)
 				}
