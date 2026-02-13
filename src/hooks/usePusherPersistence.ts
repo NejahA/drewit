@@ -76,21 +76,30 @@ export function usePusherPersistence() {
 	useEffect(() => {
 		if (loadingState.status !== 'ready') return
 
-		// Throttled persistence to DB (Full Snapshot)
-		const saveToDb = throttle(async () => {
+		const saveSnapshot = async () => {
 			if (isUpdatingFromRemote.current) return
-			const snapshot = getSnapshot(store)
+			const snapshot = getSnapshot(store) as any
+			
+			// Don't save if it's completely empty (unless it was already empty)
+			if (!snapshot.store || Object.keys(snapshot.store).length < 5) {
+				console.warn('PusherPersistence: Skipping save - Store seems empty')
+				return
+			}
+
 			try {
 				await fetch('/api/drawing', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ id: DRAWING_ID, snapshot }),
 				})
-				console.log('PusherPersistence: Saved full snapshot to DB')
+				console.log('PusherPersistence: Saved snapshot to MongoDB')
 			} catch (err) {
 				console.error('PusherPersistence: DB Save Error:', err)
 			}
-		}, 3000)
+		}
+
+		// Throttled persistence to DB
+		const throttledSave = throttle(saveSnapshot, 2000)
 
 		// Throttled Broadcast of Diffs
 		let pendingChanges: any = { added: {}, updated: {}, removed: {} }
@@ -100,11 +109,11 @@ export function usePusherPersistence() {
 			const changesToSend = { ...pendingChanges }
 			pendingChanges = { added: {}, updated: {}, removed: {} }
 
-			if (
-				Object.keys(changesToSend.added).length === 0 &&
-				Object.keys(changesToSend.updated).length === 0 &&
-				Object.keys(changesToSend.removed).length === 0
-			) return
+			const hasChanges = Object.keys(changesToSend.added).length > 0 ||
+							   Object.keys(changesToSend.updated).length > 0 ||
+							   Object.keys(changesToSend.removed).length > 0
+
+			if (!hasChanges) return
 
 			try {
 				await fetch('/api/pusher-trigger', {
@@ -119,11 +128,11 @@ export function usePusherPersistence() {
 			} catch (err) {
 				console.error('PusherPersistence: Broadcast Error:', err)
 			}
-		}, 60) // High frequency for smooth sync
+		}, 60)
 
 		const unsubscribe = store.listen((update) => {
 			if (update.source === 'user') {
-				// Accumulate only relevant changes (shapes, assets, etc.)
+				// 1. Accumulate diffs for Pusher (Shapes & Assets only)
 				for (const [id, record] of Object.entries(update.changes.added)) {
 					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
 						pendingChanges.added[id] = record
@@ -136,18 +145,26 @@ export function usePusherPersistence() {
 					}
 				}
 				for (const [id, record] of Object.entries(update.changes.removed)) {
-					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+					const [id_] = id.split(':')
+					if (id_ === 'shape' || id_ === 'asset') {
 						pendingChanges.removed[id] = record
 					}
 				}
 
 				flushBroadcast()
-				saveToDb()
+				throttledSave()
 			}
-		}, { scope: 'document' })
+		}, { source: 'user', scope: 'all' })
+
+		// Force save on window close
+		const handleBeforeUnload = () => {
+			saveSnapshot()
+		}
+		window.addEventListener('beforeunload', handleBeforeUnload)
 
 		return () => {
 			unsubscribe()
+			window.removeEventListener('beforeunload', handleBeforeUnload)
 		}
 	}, [store, loadingState.status])
 

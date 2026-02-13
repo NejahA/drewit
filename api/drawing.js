@@ -25,20 +25,30 @@ export default async function handler(req, res) {
 
       case 'POST':
         try {
-          console.log(`[POST] Saving snapshot for id: ${id}, snapshot size: ${snapshot ? JSON.stringify(snapshot).length : 0} bytes`);
           if (!snapshot) {
+            console.warn(`[POST] Save rejected: Snapshot missing for id ${id}`);
             return res.status(400).json({ error: 'Snapshot is required' });
           }
+
+          const snapshotSize = JSON.stringify(snapshot).length;
+          console.log(`[POST] Saving for id: ${id} (${snapshotSize} bytes)`);
+
           const updatedDrawing = await Drawing.findOneAndUpdate(
             { id },
             { snapshot },
             { upsert: true, new: true, setDefaultsOnInsert: true }
           );
-          console.log(`[POST] Successfully saved drawing for id: ${id}`);
-          res.status(200).json(updatedDrawing);
+
+          if (updatedDrawing) {
+            console.log(`[POST] Save successful for id: ${id}`);
+            res.status(200).json({ success: true, timestamp: updatedDrawing.updatedAt });
+          } else {
+            console.error(`[POST] Save failed: No document returned for id ${id}`);
+            res.status(500).json({ error: 'Save failed: Document not returned' });
+          }
         } catch (err) {
-          console.error(`[POST] Error saving drawing for id ${id}:`, err);
-          res.status(500).json({ error: `POST Error: ${err.message}` });
+          console.error(`[POST] Database Error for id ${id}:`, err);
+          res.status(500).json({ error: `Database Error: ${err.message}` });
         }
         break;
 

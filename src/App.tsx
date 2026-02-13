@@ -1,7 +1,8 @@
-import { Tldraw, useEditor } from 'tldraw'
+import { Tldraw, useEditor, AssetRecordType } from 'tldraw'
 import { useEffect, useRef } from 'react'
 import 'tldraw/tldraw.css'
 import { usePusherPersistence } from './hooks/usePusherPersistence'
+import { uploadAsset } from './utils/assetManager'
 
 // ────────────────────────────────────────────────
 // Throttle utility
@@ -15,6 +16,7 @@ function throttle(fn: (...args: any[]) => void, delay: number) {
 		}
 	}
 }
+
 // ────────────────────────────────────────────────
 // Reliable title updater – uses page events + minimal store filtering
 function DynamicTitleUpdater() {
@@ -66,7 +68,6 @@ function DynamicFaviconUpdater() {
 			isUpdatingRef.current = true
 			try {
 				const viewportBounds = editor.getViewportPageBounds()
-				// Use `as const` to match the expected empty tuple / readonly TLShapeId[] type
 				const { blob } = await editor.toImage([] as const, {
 					bounds: viewportBounds,
 					format: 'png',
@@ -129,7 +130,7 @@ export default function App() {
 
 	if (loadingState.status === 'loading') {
 		return (
-			<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>
+			<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif', color: '#666' }}>
 				Loading shared canvas...
 			</div>
 		)
@@ -146,6 +147,46 @@ export default function App() {
 			<Tldraw
 				store={store}
 				autoFocus
+				onMount={(editor) => {
+					// Register custom asset handler for URLs
+					editor.registerExternalAssetHandler('url', async ({ url }) => {
+						return {
+							id: AssetRecordType.createId(),
+							typeName: 'asset',
+							type: 'image',
+							props: {
+								src: url,
+								name: 'image',
+								width: 100,
+								height: 100,
+								isAnimated: false,
+								mimeType: 'image/png',
+							},
+							meta: {},
+						} as any
+					})
+
+					// Register custom asset handler for files (uploads to Supabase)
+					editor.registerExternalAssetHandler('file', async ({ file }) => {
+						const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`
+						const url = await uploadAsset(file, fileName)
+
+						return {
+							id: AssetRecordType.createId(),
+							typeName: 'asset',
+							type: 'image',
+							props: {
+								src: url,
+								name: file.name,
+								width: 100,
+								height: 100,
+								isAnimated: false,
+								mimeType: file.type,
+							},
+							meta: {},
+						} as any
+					})
+				}}
 			>
 				<DynamicTitleUpdater />
 				<DynamicFaviconUpdater />
