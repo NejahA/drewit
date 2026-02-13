@@ -23,10 +23,19 @@ export function usePusherPersistence() {
 				if (response.ok) {
 					const snapshot = await response.json()
 					if (snapshot) {
-						console.log('PusherPersistence: Snapshot found, loading into store...')
-						isUpdatingFromRemote.current = true
-						store.loadSnapshot(snapshot)
-						isUpdatingFromRemote.current = false
+						if (!snapshot.schema) {
+							console.warn('PusherPersistence: Invalid snapshot (missing schema). Starting fresh.')
+						} else {
+							console.log('PusherPersistence: Snapshot found, loading into store...')
+							isUpdatingFromRemote.current = true
+							try {
+								store.loadSnapshot(snapshot)
+							} catch (e) {
+								console.error('PusherPersistence: Failed to load snapshot:', e)
+								console.warn('PusherPersistence: Falling back to fresh state.')
+							}
+							isUpdatingFromRemote.current = false
+						}
 					} else {
 						console.log('PusherPersistence: No existing snapshot found (New drawing)')
 					}
