@@ -71,6 +71,7 @@ export function usePusherPersistence() {
 		const channel = pusher.subscribe(`drawing-${DRAWING_ID}`)
 		
 		channel.bind('drawing-diff', (data: { changes: any }) => {
+			// ... existing diff logic ...
 			console.log('PusherPersistence: Received incremental sync')
 			isUpdatingFromRemote.current = true
 			try {
@@ -96,6 +97,11 @@ export function usePusherPersistence() {
 				console.error('PusherPersistence: Remote merge error:', err)
 			}
 			isUpdatingFromRemote.current = false
+		})
+
+		channel.bind('drawing-sync-request', () => {
+			console.log('PusherPersistence: Received full sync request (payload too large fallback)')
+			loadInitial()
 		})
 
 		return () => {

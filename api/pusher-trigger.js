@@ -41,12 +41,21 @@ export default async function handler(req, res) {
     if (changes) {
       const pusherOptions = socketId ? { socket_id: socketId } : {};
       
-      // Broadcast the diff to other clients
-      await pusher.trigger(`drawing-${id}`, 'drawing-diff', {
-        changes,
-      }, pusherOptions);
-
-      console.log(`[Pusher] Broadcasted incremental diff for ${id} (Excluded: ${socketId || 'none'})`);
+      try {
+        // Broadcast the diff to other clients
+        await pusher.trigger(`drawing-${id}`, 'drawing-diff', {
+          changes,
+        }, pusherOptions);
+        console.log(`[Pusher] Broadcasted incremental diff for ${id} (Excluded: ${socketId || 'none'})`);
+      } catch (pusherErr) {
+        if (pusherErr.status === 413 || pusherErr.message?.includes('too large')) {
+          console.warn(`[Pusher] Payload too large for ${id}. Triggering full sync request.`);
+          // Fallback: Tell clients to fetch full snapshot from DB
+          await pusher.trigger(`drawing-${id}`, 'drawing-sync-request', {}, pusherOptions);
+        } else {
+          throw pusherErr;
+        }
+      }
     }
 
     res.status(200).json({ success: true });
