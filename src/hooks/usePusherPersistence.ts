@@ -17,15 +17,21 @@ export function usePusherPersistence() {
 	useEffect(() => {
 		// 1. Initial Load from DB
 		async function loadInitial() {
+			console.log('PusherPersistence: Initializing load...')
 			try {
 				const response = await fetch(`/api/drawing?id=${DRAWING_ID}`)
 				if (response.ok) {
 					const snapshot = await response.json()
 					if (snapshot) {
+						console.log('PusherPersistence: Snapshot found, loading into store...')
 						isUpdatingFromRemote.current = true
 						store.loadSnapshot(snapshot)
 						isUpdatingFromRemote.current = false
+					} else {
+						console.log('PusherPersistence: No existing snapshot found (New drawing)')
 					}
+				} else {
+					console.error('PusherPersistence: Load failed with status:', response.status)
 				}
 				setLoadingState({ status: 'ready' })
 			} catch (err: any) {
@@ -36,8 +42,12 @@ export function usePusherPersistence() {
 		loadInitial()
 
 		// 2. Pusher Setup
-		if (!PUSHER_KEY || !PUSHER_CLUSTER) return
+		if (!PUSHER_KEY || !PUSHER_CLUSTER) {
+			console.warn('PusherPersistence: Missing keys, live sync disabled.')
+			return
+		}
 
+		console.log('PusherPersistence: Connecting to Pusher...')
 		const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER })
 		pusherRef.current = pusher
 
@@ -46,28 +56,33 @@ export function usePusherPersistence() {
 		channel.bind('drawing-diff', (data: { changes: any }) => {
 			console.log('PusherPersistence: Received incremental sync')
 			isUpdatingFromRemote.current = true
-			store.mergeRemoteChanges(() => {
-				const { added, updated, removed } = data.changes
-				
-				// Apply removals
-				for (const [id, _] of Object.entries(removed)) {
-					store.remove([id as any])
-				}
-				
-				// Apply additions and updates
-				const toPut = [
-					...Object.values(added),
-					...Object.values(updated).map((u: any) => u[1]) // updated is [old, new]
-				]
-				
-				if (toPut.length > 0) {
-					store.put(toPut as any[])
-				}
-			})
+			try {
+				store.mergeRemoteChanges(() => {
+					const { added, updated, removed } = data.changes
+					
+					// Apply removals
+					for (const [id, _] of Object.entries(removed)) {
+						store.remove([id as any])
+					}
+					
+					// Apply additions and updates
+					const toPut = [
+						...Object.values(added),
+						...Object.values(updated).map((u: any) => u[1]) // updated is [old, new]
+					]
+					
+					if (toPut.length > 0) {
+						store.put(toPut as any[])
+					}
+				})
+			} catch (err) {
+				console.error('PusherPersistence: Remote merge error:', err)
+			}
 			isUpdatingFromRemote.current = false
 		})
 
 		return () => {
+			console.log('PusherPersistence: Cleaning up subscription...')
 			pusher.unsubscribe(`drawing-${DRAWING_ID}`)
 			pusher.disconnect()
 		}
@@ -80,15 +95,21 @@ export function usePusherPersistence() {
 		const saveToDb = throttle(async () => {
 			if (isUpdatingFromRemote.current) return
 			const snapshot = getSnapshot(store)
+			console.log('PusherPersistence: Persisting to MongoDB...')
 			try {
-				await fetch('/api/drawing', {
+				const res = await fetch('/api/drawing', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ id: DRAWING_ID, snapshot }),
 				})
-				console.log('PusherPersistence: Saved full snapshot to DB')
+				if (!res.ok) {
+					const errorData = await res.json().catch(() => ({}))
+					console.error('PusherPersistence: Save Failed - Status:', res.status, errorData)
+				} else {
+					console.log('PusherPersistence: Save Successful')
+				}
 			} catch (err) {
-				console.error('PusherPersistence: DB Save Error:', err)
+				console.error('PusherPersistence: Network Error during save:', err)
 			}
 		}, 3000)
 
@@ -148,6 +169,11 @@ export function usePusherPersistence() {
 				saveToDb()
 			}
 		}, { scope: 'document' })
+
+		return () => {
+			unsubscribe()
+		}
+	}, [store, loadingState.status])
 
 		return () => {
 			unsubscribe()
