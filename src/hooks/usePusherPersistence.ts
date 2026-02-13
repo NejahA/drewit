@@ -123,20 +123,23 @@ export function usePusherPersistence() {
 
 		const unsubscribe = store.listen((update) => {
 			if (update.source === 'user') {
-				// Accumulate only relevant changes (shapes, assets, etc.)
+				// Accumulate only relevant changes (shapes, assets, pages, document)
 				for (const [id, record] of Object.entries(update.changes.added)) {
-					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+					const type = (record as any).typeName
+					if (type === 'shape' || type === 'asset' || type === 'page' || type === 'document') {
 						pendingChanges.added[id] = record
 					}
 				}
 				for (const [id, record] of Object.entries(update.changes.updated)) {
 					const newVal = record[1]
-					if ((newVal as any).typeName === 'shape' || (newVal as any).typeName === 'asset') {
+					const type = (newVal as any).typeName
+					if (type === 'shape' || type === 'asset' || type === 'page' || type === 'document') {
 						pendingChanges.updated[id] = record
 					}
 				}
 				for (const [id, record] of Object.entries(update.changes.removed)) {
-					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+					const type = (record as any).typeName
+					if (type === 'shape' || type === 'asset' || type === 'page' || type === 'document') {
 						pendingChanges.removed[id] = record
 					}
 				}
