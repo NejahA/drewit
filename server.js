@@ -97,8 +97,18 @@ app.post('/api/pusher-trigger', async (req, res) => {
     // 2. Broadcast Diff
     if (changes) {
       const pusherOptions = socketId ? { socket_id: socketId } : {};
-      await pusher.trigger(`drawing-${targetId}`, 'drawing-diff', { changes }, pusherOptions);
-      console.log(`📡 [Pusher] Broadcasted diff for ${targetId}`);
+      try {
+        await pusher.trigger(`drawing-${targetId}`, 'drawing-diff', { changes }, pusherOptions);
+        console.log(`📡 [Pusher] Broadcasted diff for ${targetId}`);
+      } catch (pusherErr) {
+        if (pusherErr.status === 413 || pusherErr.message?.includes('too large')) {
+          console.warn(`⚠️ [Pusher] Payload too large for ${targetId}. Triggering full sync request.`);
+          // Fallback: Tell clients to fetch full snapshot from DB
+          await pusher.trigger(`drawing-${targetId}`, 'drawing-sync-request', {}, pusherOptions);
+        } else {
+          throw pusherErr;
+        }
+      }
     }
 
     res.status(200).json({ success: true });
