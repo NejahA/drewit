@@ -95,7 +95,7 @@ export function usePusherPersistence() {
 		const saveToDb = throttle(async () => {
 			if (isUpdatingFromRemote.current) return
 			const snapshot = getSnapshot(store)
-			console.log('PusherPersistence: Persisting to MongoDB...')
+			console.log('PusherPersistence: Attempting to save to MongoDB...')
 			try {
 				const res = await fetch('/api/drawing', {
 					method: 'POST',
@@ -106,12 +106,26 @@ export function usePusherPersistence() {
 					const errorData = await res.json().catch(() => ({}))
 					console.error('PusherPersistence: Save Failed - Status:', res.status, errorData)
 				} else {
-					console.log('PusherPersistence: Save Successful')
+					console.log('PusherPersistence: Save Successful (Throttled)')
 				}
 			} catch (err) {
 				console.error('PusherPersistence: Network Error during save:', err)
 			}
-		}, 3000)
+		}, 2000)
+
+		// Emergency save on window close
+		const handleBeforeUnload = () => {
+			if (isUpdatingFromRemote.current) return
+			const snapshot = getSnapshot(store)
+			// Using fetch with keepalive: true for beforeunload
+			fetch('/api/drawing', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: DRAWING_ID, snapshot }),
+				keepalive: true
+			})
+		}
+		window.addEventListener('beforeunload', handleBeforeUnload)
 
 		// Throttled Broadcast of Diffs
 		let pendingChanges: any = { added: {}, updated: {}, removed: {} }
@@ -172,11 +186,7 @@ export function usePusherPersistence() {
 
 		return () => {
 			unsubscribe()
-		}
-	}, [store, loadingState.status])
-
-		return () => {
-			unsubscribe()
+			window.removeEventListener('beforeunload', handleBeforeUnload)
 		}
 	}, [store, loadingState.status])
 

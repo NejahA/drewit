@@ -25,20 +25,39 @@ export default async function handler(req, res) {
 
       case 'POST':
         try {
-          console.log(`[POST] Saving snapshot for id: ${id}, snapshot size: ${snapshot ? JSON.stringify(snapshot).length : 0} bytes`);
-          if (!snapshot) {
+          const body = req.body;
+          const targetId = id;
+          const targetSnapshot = snapshot || body?.snapshot;
+
+          console.log(`[POST] Request for ID: ${targetId}, Snapshot Present: ${!!targetSnapshot}`);
+          
+          if (targetSnapshot) {
+            const size = JSON.stringify(targetSnapshot).length;
+            console.log(`[POST] Snapshot size: ${size} bytes`);
+          }
+
+          if (!targetSnapshot) {
+            console.warn('[POST] Missing snapshot in request body');
             return res.status(400).json({ error: 'Snapshot is required' });
           }
+
+          // Force check connection
+          if (mongoose.connection.readyState !== 1) {
+            console.log('MongoDB connection not ready, reconnecting...');
+            await connectToDatabase();
+          }
+
           const updatedDrawing = await Drawing.findOneAndUpdate(
-            { id },
-            { snapshot },
+            { id: targetId },
+            { snapshot: targetSnapshot },
             { upsert: true, new: true, setDefaultsOnInsert: true }
           );
-          console.log(`[POST] Successfully saved drawing for id: ${id}`);
-          res.status(200).json(updatedDrawing);
+
+          console.log(`[POST] Database update successful for ${targetId}`);
+          res.status(200).json({ success: true, id: updatedDrawing.id });
         } catch (err) {
-          console.error(`[POST] Error saving drawing for id ${id}:`, err);
-          res.status(500).json({ error: `POST Error: ${err.message}` });
+          console.error(`[POST] Persistence Error for ${id}:`, err);
+          res.status(500).json({ error: `Persistence Error: ${err.message}` });
         }
         break;
 
