@@ -30,11 +30,24 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. If snapshot is provided, save to MongoDB (Persistence fallback)
+    // 1. If snapshot is provided, save to MongoDB (Persistence)
     if (snapshot) {
+      const size = JSON.stringify(snapshot).length;
+      console.log(`[Pusher] Attempting to persist ${size} bytes to DB for ${id}`);
+      
+      if (size > 4000000) { // 4MB Warning (Vercel limit is 4.5MB)
+        console.warn(`[Pusher] WARNING: Large payload (${size} bytes). Risk of 413 Payload Too Large.`);
+      }
+
       await connectToDatabase();
-      await Drawing.findOneAndUpdate({ id }, { snapshot }, { upsert: true });
-      console.log(`[Pusher] Persisted full snapshot for ${id}`);
+      const result = await Drawing.findOneAndUpdate(
+        { id }, 
+        { snapshot }, 
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      
+      if (!result) throw new Error('Failed to update MongoDB document');
+      console.log(`[Pusher] Persisted full snapshot for ${id} (${size} bytes)`);
     }
 
     // 2. If triggerReload is true, broadcast a global reload signal
@@ -47,21 +60,17 @@ export default async function handler(req, res) {
     // 3. If changes (diff) are provided, broadcast via Pusher (Real-time sync)
     if (changes) {
       const pusherOptions = socketId ? { socket_id: socketId } : {};
-      
-      // Broadcast the diff to other clients
-      await pusher.trigger(`drawing-${id}`, 'drawing-diff', {
-        changes,
-      }, pusherOptions);
-
-      console.log(`[Pusher] Broadcasted incremental diff for ${id} (Excluded: ${socketId || 'none'})`);
+      await pusher.trigger(`drawing-${id}`, 'drawing-diff', { changes }, pusherOptions);
+      console.log(`[Pusher] Broadcasted incremental diff for ${id}`);
     }
 
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error('[Pusher] Server Error:', err);
+    console.error('[Pusher] ERROR:', err);
     res.status(500).json({ 
-      error: 'Pusher Operation Failed', 
-      details: err.message 
+      error: 'Pusher/DB Operation Failed', 
+      details: err.message,
+      code: err.code
     });
   }
 }
