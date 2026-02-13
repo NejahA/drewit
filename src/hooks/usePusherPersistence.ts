@@ -76,30 +76,21 @@ export function usePusherPersistence() {
 	useEffect(() => {
 		if (loadingState.status !== 'ready') return
 
-		const saveSnapshot = async () => {
+		// Throttled persistence to DB (Full Snapshot)
+		const saveToDb = throttle(async () => {
 			if (isUpdatingFromRemote.current) return
-			const snapshot = getSnapshot(store) as any
-			
-			// Don't save if it's completely empty (unless it was already empty)
-			if (!snapshot.store || Object.keys(snapshot.store).length < 5) {
-				console.warn('PusherPersistence: Skipping save - Store seems empty')
-				return
-			}
-
+			const snapshot = getSnapshot(store)
 			try {
 				await fetch('/api/drawing', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ id: DRAWING_ID, snapshot }),
 				})
-				console.log('PusherPersistence: Saved snapshot to MongoDB')
+				console.log('PusherPersistence: Saved full snapshot to DB')
 			} catch (err) {
 				console.error('PusherPersistence: DB Save Error:', err)
 			}
-		}
-
-		// Throttled persistence to DB
-		const throttledSave = throttle(saveSnapshot, 2000)
+		}, 3000)
 
 		// Throttled Broadcast of Diffs
 		let pendingChanges: any = { added: {}, updated: {}, removed: {} }
@@ -109,11 +100,11 @@ export function usePusherPersistence() {
 			const changesToSend = { ...pendingChanges }
 			pendingChanges = { added: {}, updated: {}, removed: {} }
 
-			const hasChanges = Object.keys(changesToSend.added).length > 0 ||
-							   Object.keys(changesToSend.updated).length > 0 ||
-							   Object.keys(changesToSend.removed).length > 0
-
-			if (!hasChanges) return
+			if (
+				Object.keys(changesToSend.added).length === 0 &&
+				Object.keys(changesToSend.updated).length === 0 &&
+				Object.keys(changesToSend.removed).length === 0
+			) return
 
 			try {
 				await fetch('/api/pusher-trigger', {
@@ -128,44 +119,35 @@ export function usePusherPersistence() {
 			} catch (err) {
 				console.error('PusherPersistence: Broadcast Error:', err)
 			}
-		}, 60)
+		}, 60) // High frequency for smooth sync
 
 		const unsubscribe = store.listen((update) => {
-			// Prevent feedback loops: don't broadcast or save if the update came from Pusher
-			if (update.source === 'remote') return
-
-			// 1. Accumulate diffs for Pusher (Shapes & Assets only)
-			for (const [id, record] of Object.entries(update.changes.added)) {
-				if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
-					pendingChanges.added[id] = record
+			if (update.source === 'user') {
+				// Accumulate only relevant changes (shapes, assets, etc.)
+				for (const [id, record] of Object.entries(update.changes.added)) {
+					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+						pendingChanges.added[id] = record
+					}
 				}
-			}
-			for (const [id, record] of Object.entries(update.changes.updated)) {
-				const newVal = record[1]
-				if ((newVal as any).typeName === 'shape' || (newVal as any).typeName === 'asset') {
-					pendingChanges.updated[id] = record
+				for (const [id, record] of Object.entries(update.changes.updated)) {
+					const newVal = record[1]
+					if ((newVal as any).typeName === 'shape' || (newVal as any).typeName === 'asset') {
+						pendingChanges.updated[id] = record
+					}
 				}
-			}
-			for (const [id, record] of Object.entries(update.changes.removed)) {
-				const [id_] = id.split(':')
-				if (id_ === 'shape' || id_ === 'asset') {
-					pendingChanges.removed[id] = record
+				for (const [id, record] of Object.entries(update.changes.removed)) {
+					if ((record as any).typeName === 'shape' || (record as any).typeName === 'asset') {
+						pendingChanges.removed[id] = record
+					}
 				}
+
+				flushBroadcast()
+				saveToDb()
 			}
-
-			flushBroadcast()
-			throttledSave()
-		}, { scope: 'all' })
-
-		// Force save on window close
-		const handleBeforeUnload = () => {
-			saveSnapshot()
-		}
-		window.addEventListener('beforeunload', handleBeforeUnload)
+		}, { scope: 'document' })
 
 		return () => {
 			unsubscribe()
-			window.removeEventListener('beforeunload', handleBeforeUnload)
 		}
 	}, [store, loadingState.status])
 
