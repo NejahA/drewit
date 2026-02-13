@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { connectToDatabase, Drawing } from './_lib/db.js';
 
 export default async function handler(req, res) {
