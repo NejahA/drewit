@@ -6,11 +6,23 @@ const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY
 const PUSHER_CLUSTER = import.meta.env.VITE_PUSHER_CLUSTER
 const DRAWING_ID = 'global-canvas'
 
+// Chunked base64 encode so large images don't hit "Maximum call stack size exceeded"
+function toBase64(arrayBuffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(arrayBuffer)
+	const chunkSize = 4096
+	let binary = ''
+	for (let i = 0; i < bytes.length; i += chunkSize) {
+		const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
+		binary += String.fromCharCode.apply(null, chunk as unknown as number[])
+	}
+	return btoa(binary)
+}
+
 // Upload images to our API so all tabs (and other clients) can load them via the same URL
 const assetStore: TLAssetStore = {
 	async upload(_asset, file, abortSignal) {
 		const arrayBuffer = await file.arrayBuffer()
-		const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+		const base64 = toBase64(arrayBuffer)
 		const res = await fetch('/api/asset', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -26,7 +38,10 @@ const assetStore: TLAssetStore = {
 	},
 	resolve(asset) {
 		const src = asset.props.src
-		if (typeof src === 'string' && src.startsWith('/')) {
+		if (typeof src !== 'string') return src
+		// Blob URLs only work in the tab that created them; other tabs/refresh can't load them
+		if (src.startsWith('blob:')) return null
+		if (src.startsWith('/')) {
 			return typeof window !== 'undefined' ? window.location.origin + src : src
 		}
 		return src

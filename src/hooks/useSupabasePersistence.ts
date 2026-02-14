@@ -9,10 +9,8 @@ export function useSupabasePersistence() {
 	const [loadingState, setLoadingState] = useState<{ status: 'loading' | 'ready' | 'error'; error?: string }>({
 		status: 'loading',
 	})
-
 	useEffect(() => {
 		let isCancelled = false
-
 		async function loadSnapshot() {
 			console.log('useSupabasePersistence: Loading initial snapshot...')
 			try {
@@ -21,7 +19,6 @@ export function useSupabasePersistence() {
 					.select('snapshot')
 					.eq('id', DRAWING_ID)
 					.maybeSingle()
-
 				if (error) {
 					console.error('useSupabasePersistence: Supabase error loading snapshot:', error)
 					throw error
@@ -35,7 +32,7 @@ export function useSupabasePersistence() {
 				}
 				
 				if (!isCancelled) setLoadingState({ status: 'ready' })
-			} catch (err: any) {
+			} catch (err: any) {	
 				console.error('useSupabasePersistence: Error loading snapshot:', err)
 				if (!isCancelled) setLoadingState({ status: 'error', error: err.message })
 			}
@@ -123,7 +120,7 @@ export function useSupabasePersistence() {
 				if (err) console.error('useSupabasePersistence: Subscription Error:', err)
 				
 				if (status === 'CHANNEL_ERROR') {
-					console.error('useSupabasePersistence: CHANNEL_ERROR. This usually means Realtime is disabled for this project or table.')
+					console.error('useSupabasePersistence: CHANNEL_ERROR. This wusually means Realtime is disabled for this project or table.')
 				}
 			})
 
