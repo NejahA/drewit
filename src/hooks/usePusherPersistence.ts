@@ -1,4 +1,4 @@
-import { createTLStore, defaultShapeUtils, throttle } from 'tldraw'
+import { createTLStore, defaultShapeUtils, throttle, type TLAssetStore } from 'tldraw'
 import { useEffect, useState, useRef } from 'react'
 import Pusher from 'pusher-js'
 
@@ -6,8 +6,33 @@ const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY
 const PUSHER_CLUSTER = import.meta.env.VITE_PUSHER_CLUSTER
 const DRAWING_ID = 'global-canvas'
 
+// Upload images to our API so all tabs (and other clients) can load them via the same URL
+const assetStore: TLAssetStore = {
+	async upload(_asset, file, abortSignal) {
+		const arrayBuffer = await file.arrayBuffer()
+		const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+		const res = await fetch('/api/asset', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ data: base64, mimeType: file.type || 'image/png' }),
+			signal: abortSignal,
+		})
+		if (!res.ok) {
+			const err = await res.json().catch(() => ({}))
+			throw new Error((err as { error?: string }).error || `Upload failed: ${res.status}`)
+		}
+		const { src } = await res.json()
+		return { src }
+	},
+	resolve(asset) {
+		return asset.props.src
+	},
+}
+
 export function usePusherPersistence() {
-	const [store] = useState(() => createTLStore({ shapeUtils: defaultShapeUtils }))
+	const [store] = useState(() =>
+		createTLStore({ shapeUtils: defaultShapeUtils, assets: assetStore })
+	)
 	const [loadingState, setLoadingState] = useState<{ status: 'loading' | 'ready' | 'error'; error?: string }>({
 		status: 'loading',
 	})

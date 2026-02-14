@@ -1,5 +1,5 @@
 import express from 'express';
-import { createServer } from 'http';
+import { randomUUID } from 'crypto';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import cors from 'cors';
@@ -30,6 +30,13 @@ const DrawingSchema = new mongoose.Schema({
 }, { timestamps: true, strict: false });
 
 const Drawing = mongoose.models.Drawing || mongoose.model('Drawing', DrawingSchema);
+
+const AssetSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  mimeType: { type: String, required: true },
+  data: { type: Buffer, required: true },
+}, { timestamps: true });
+const Asset = mongoose.models.Asset || mongoose.model('Asset', AssetSchema);
 
 // Connect to MongoDB
 mongoose.connect(MONGODB_URI)
@@ -114,6 +121,36 @@ app.post('/api/pusher-trigger', async (req, res) => {
     res.status(200).json({ success: true });
   } catch (err) {
     console.error('POST /api/pusher-trigger Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/asset – upload image for cross-tab sync
+app.post('/api/asset', async (req, res) => {
+  const { data: base64, mimeType } = req.body || {};
+  if (!base64 || !mimeType) {
+    return res.status(400).json({ error: 'Missing data or mimeType' });
+  }
+  try {
+    const id = randomUUID();
+    await Asset.create({ id, mimeType, data: Buffer.from(base64, 'base64') });
+    res.status(200).json({ id, src: `/api/asset/${id}` });
+  } catch (err) {
+    console.error('POST /api/asset Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/asset/:id – serve asset so other tabs can load it
+app.get('/api/asset/:id', async (req, res) => {
+  try {
+    const asset = await Asset.findOne({ id: req.params.id });
+    if (!asset) return res.status(404).json({ error: 'Asset not found' });
+    res.setHeader('Content-Type', asset.mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(asset.data);
+  } catch (err) {
+    console.error('GET /api/asset Error:', err);
     res.status(500).json({ error: err.message });
   }
 });

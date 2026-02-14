@@ -18,6 +18,15 @@ const DrawingSchema = new mongoose.Schema({
 });
 
 const Drawing = mongoose.models.Drawing || mongoose.model('Drawing', DrawingSchema);
+
+// Asset storage (images etc.) for cross-tab sync – served at /api/asset/:id
+const AssetSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  mimeType: { type: String, required: true },
+  data: { type: Buffer, required: true },
+}, { timestamps: true });
+
+const Asset = mongoose.models.Asset || mongoose.model('Asset', AssetSchema);
  
 // Cached connection for Serverless Functions
 let cachedDb = null;
@@ -60,5 +69,6 @@ async function connectToDatabase() {
 
 export {
   connectToDatabase,
-  Drawing
+  Drawing,
+  Asset,
 };
