@@ -135,6 +135,22 @@ export default function App() {
 		)
 	}
 
+	if (loadingState.status === 'error') {
+		return (
+			<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif', padding: 24, textAlign: 'center' }}>
+				<p style={{ marginBottom: 8, fontWeight: 600 }}>Could not load canvas</p>
+				<p style={{ marginBottom: 16, color: '#666' }}>{loadingState.error ?? 'Make sure the server is running (npm run server) and refresh.'}</p>
+				<button
+					type="button"
+					onClick={() => window.location.reload()}
+					style={{ padding: '8px 16px', cursor: 'pointer' }}
+				>
+					Retry
+				</button>
+			</div>
+		)
+	}
+
 	return (
 		<div
 			style={{

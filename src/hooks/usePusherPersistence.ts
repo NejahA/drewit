@@ -1,4 +1,4 @@
-import { createTLStore, defaultShapeUtils, getSnapshot, throttle } from 'tldraw'
+import { createTLStore, defaultShapeUtils, throttle } from 'tldraw'
 import { useEffect, useState, useRef } from 'react'
 import Pusher from 'pusher-js'
 
@@ -31,13 +31,12 @@ export function usePusherPersistence() {
 							console.log('PusherPersistence: Load successful!')
 						} catch (e) {
 							console.error('PusherPersistence: Failed to load snapshot:', e)
-							console.warn('PusherPersistence: Falling back to fresh state.')
+							console.warn('PusherPersistence: Falling back to fresh state locally (not overwriting server).')
 						}
 						isUpdatingFromRemote.current = false
-					} else {
-						console.warn('PusherPersistence: Invalid or missing snapshot. Initializing fresh state...')
-						// Force overwrite the bad data with a fresh snapshot immediately
-						// Use serialize() instead of getSnapshot() to avoid "Session state not ready"
+					} else if (snapshot == null) {
+						// No drawing in DB yet – initialize with fresh snapshot so first save works
+						console.warn('PusherPersistence: No existing drawing. Using fresh state.')
 						const freshSnapshot = store.serialize()
 						try {
 							await fetch('/api/drawing', {
@@ -49,6 +48,8 @@ export function usePusherPersistence() {
 						} catch (err) {
 							console.error('PusherPersistence: Failed to initialize fresh snapshot:', err)
 						}
+					} else {
+						console.warn('PusherPersistence: Invalid snapshot from server. Using fresh state locally (not overwriting).')
 					}
 				} else {
 					console.error('PusherPersistence: Load failed with status:', response.status)
@@ -74,7 +75,6 @@ export function usePusherPersistence() {
 		const channel = pusher.subscribe(`drawing-${DRAWING_ID}`)
 		
 		channel.bind('drawing-diff', (data: { changes: any }) => {
-			// ... existing diff logic ...
 			console.log('PusherPersistence: Received incremental sync')
 			isUpdatingFromRemote.current = true
 			try {
@@ -120,7 +120,7 @@ export function usePusherPersistence() {
 		// Throttled persistence to DB (Full Snapshot)
 		const saveToDb = throttle(async () => {
 			if (isUpdatingFromRemote.current) return
-			const snapshot = getSnapshot(store)
+			const snapshot = store.getSnapshot()
 			console.log('PusherPersistence: Attempting to save to MongoDB...')
 			try {
 				const res = await fetch('/api/drawing', {
@@ -142,7 +142,7 @@ export function usePusherPersistence() {
 		// Emergency save on window close
 		const handleBeforeUnload = () => {
 			if (isUpdatingFromRemote.current) return
-			const snapshot = getSnapshot(store)
+			const snapshot = store.getSnapshot()
 			// Using fetch with keepalive: true for beforeunload
 			fetch('/api/drawing', {
 				method: 'POST',

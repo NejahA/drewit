@@ -15,6 +15,28 @@ Run the development server with `yarn dev` or `npm run dev`.
 
 Open `http://localhost:5173/` in your browser to see the app.
 
+For **persistence** (drawings saved to MongoDB and optional Pusher sync), run the API server in another terminal:
+
+```bash
+npm run server
+```
+
+(Vite proxies `/api` to `http://localhost:5000` in development.)
+
+## Deploying to Vercel
+
+The app is set up for Vercel: the frontend is built with Vite and the API is implemented as serverless functions in `/api` (no need to run `server.js` on Vercel).
+
+1. **Push to GitHub** and import the repo in [Vercel](https://vercel.com).
+2. **Environment variables** (Project → Settings → Environment Variables). Add:
+   - `MONGODB_URI` – MongoDB connection string (e.g. Atlas).
+   - `PUSHER_APP_ID`, `PUSHER_SECRET`, `VITE_PUSHER_KEY`, `VITE_PUSHER_CLUSTER` – for real-time sync (optional; if missing, live sync is disabled but persistence still works).
+
+   Use the same variable names so the build gets `VITE_*` and the serverless functions get the rest.
+3. **Deploy.** Vercel will run `npm run build`, serve the `dist` output, and route `/api/drawing` and `/api/pusher-trigger` to the serverless handlers.
+
+**Note:** Vercel has a ~4.5 MB request body limit per function. Very large canvas snapshots may need to stay under that (or use a paid plan with higher limits).
+
 ## License
 
 This project is provided under the MIT license found [here](https://github.com/tldraw/vite-template/blob/main/LICENSE.md). The tldraw SDK is provided under the [tldraw license](https://github.com/tldraw/tldraw/blob/main/LICENSE.md).
