@@ -4,7 +4,11 @@ import { randomUUID } from 'crypto';
 // Single route: POST = upload, GET ?id=xxx = serve (avoids Vercel dynamic path issues)
 export default async function handler(req, res) {
   if (req.method === 'GET') {
-    const id = req.query.id;
+    let id = req.query.id;
+    if (!id && req.url) {
+      const match = req.url.match(/\/api\/asset\/([^/?#]+)/);
+      if (match) id = match[1];
+    }
     if (!id) {
       return res.status(400).json({ error: 'Missing id' });
     }

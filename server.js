@@ -134,14 +134,28 @@ app.post('/api/asset', async (req, res) => {
   try {
     const id = randomUUID();
     await Asset.create({ id, mimeType, data: Buffer.from(base64, 'base64') });
-    res.status(200).json({ id, src: `/api/asset/${id}` });
+    res.status(200).json({ id, src: `/api/asset?id=${id}` });
   } catch (err) {
     console.error('POST /api/asset Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/asset/:id – serve asset so other tabs can load it
+// GET /api/asset?id=xxx or /api/asset/:id – serve asset so other tabs can load it
+app.get('/api/asset', async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  try {
+    const asset = await Asset.findOne({ id });
+    if (!asset) return res.status(404).json({ error: 'Asset not found' });
+    res.setHeader('Content-Type', asset.mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(asset.data);
+  } catch (err) {
+    console.error('GET /api/asset Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 app.get('/api/asset/:id', async (req, res) => {
   try {
     const asset = await Asset.findOne({ id: req.params.id });
