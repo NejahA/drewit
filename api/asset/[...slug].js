@@ -1,12 +1,14 @@
 import { connectToDatabase, Asset } from '../_lib/db.js';
 
+// GET /api/asset/:id – serve asset (catch-all so Vercel reliably matches /api/asset/xxx)
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { id } = req.query;
+  const slug = req.query.slug;
+  const id = Array.isArray(slug) ? slug[0] : slug;
   if (!id) {
     return res.status(400).json({ error: 'Missing asset id' });
   }

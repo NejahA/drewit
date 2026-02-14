@@ -25,7 +25,11 @@ const assetStore: TLAssetStore = {
 		return { src }
 	},
 	resolve(asset) {
-		return asset.props.src
+		const src = asset.props.src
+		if (typeof src === 'string' && src.startsWith('/')) {
+			return typeof window !== 'undefined' ? window.location.origin + src : src
+		}
+		return src
 	},
 }
 
