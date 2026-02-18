@@ -126,6 +126,7 @@ function DynamicFaviconUpdater() {
 // ────────────────────────────────────────────────
 export default function App() {
 	const { store, loadingState } = usePusherPersistence()
+	const licenseKey = import.meta.env.VITE_TLDRAW_LICENSE_KEY as string | undefined
 
 	if (loadingState.status === 'loading') {
 		return (
@@ -162,6 +163,7 @@ export default function App() {
 			<Tldraw
 				store={store}
 				autoFocus
+				licenseKey={licenseKey}
 			>
 				<DynamicTitleUpdater />
 				<DynamicFaviconUpdater />

@@ -5,7 +5,6 @@ import Pusher from 'pusher-js'
 const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY
 const PUSHER_CLUSTER = import.meta.env.VITE_PUSHER_CLUSTER
 const DRAWING_ID = 'global-canvas'
-
 // Chunked base64 encode so large images don't hit "Maximum call stack size exceeded"
 function toBase64(arrayBuffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(arrayBuffer)
@@ -17,7 +16,6 @@ function toBase64(arrayBuffer: ArrayBuffer): string {
 	}
 	return btoa(binary)
 }
-
 // Upload images to our API so all tabs (and other clients) can load them via the same URL
 const assetStore: TLAssetStore = {
 	async upload(_asset, file, abortSignal) {
@@ -47,7 +45,6 @@ const assetStore: TLAssetStore = {
 		return src
 	},
 }
-
 export function usePusherPersistence() {
 	const [store] = useState(() =>
 		createTLStore({ shapeUtils: defaultShapeUtils, assets: assetStore })
@@ -57,7 +54,6 @@ export function usePusherPersistence() {
 	})
 	const pusherRef = useRef<Pusher | null>(null)
 	const isUpdatingFromRemote = useRef(false)
-
 	useEffect(() => {
 		// 1. Initial Load from DB
 		async function loadInitial() {
@@ -105,19 +101,15 @@ export function usePusherPersistence() {
 			}
 		}
 		loadInitial()
-
 		// 2. Pusher Setup
 		if (!PUSHER_KEY || !PUSHER_CLUSTER) {
 			console.warn('PusherPersistence: Missing keys, live sync disabled.')
 			return
 		}
-
 		console.log('PusherPersistence: Connecting to Pusher...')
 		const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER })
 		pusherRef.current = pusher
-
 		const channel = pusher.subscribe(`drawing-${DRAWING_ID}`)
-		
 		channel.bind('drawing-diff', (data: { changes: any }) => {
 			console.log('PusherPersistence: Received incremental sync')
 			isUpdatingFromRemote.current = true
@@ -145,22 +137,18 @@ export function usePusherPersistence() {
 			}
 			isUpdatingFromRemote.current = false
 		})
-
 		channel.bind('drawing-sync-request', () => {
 			console.log('PusherPersistence: Received full sync request (payload too large fallback)')
 			loadInitial()
 		})
-
 		return () => {
 			console.log('PusherPersistence: Cleaning up subscription...')
 			pusher.unsubscribe(`drawing-${DRAWING_ID}`)
 			pusher.disconnect()
 		}
 	}, [store])
-
 	useEffect(() => {
 		if (loadingState.status !== 'ready') return
-
 		// Throttled persistence to DB (Full Snapshot)
 		const saveToDb = throttle(async () => {
 			if (isUpdatingFromRemote.current) return
@@ -182,7 +170,6 @@ export function usePusherPersistence() {
 				console.error('PusherPersistence: Network Error during save:', err)
 			}
 		}, 2000)
-
 		// Emergency save on window close
 		const handleBeforeUnload = () => {
 			if (isUpdatingFromRemote.current) return
@@ -196,21 +183,17 @@ export function usePusherPersistence() {
 			})
 		}
 		window.addEventListener('beforeunload', handleBeforeUnload)
-
 		// Throttled Broadcast of Diffs
 		let pendingChanges: any = { added: {}, updated: {}, removed: {} }
-		
 		const flushBroadcast = throttle(async () => {
 			const socketId = pusherRef.current?.connection.socket_id
 			const changesToSend = { ...pendingChanges }
 			pendingChanges = { added: {}, updated: {}, removed: {} }
-
 			if (
 				Object.keys(changesToSend.added).length === 0 &&
 				Object.keys(changesToSend.updated).length === 0 &&
 				Object.keys(changesToSend.removed).length === 0
 			) return
-
 			try {
 				await fetch('/api/pusher-trigger', {
 					method: 'POST',
@@ -225,7 +208,6 @@ export function usePusherPersistence() {
 				console.error('PusherPersistence: Broadcast Error:', err)
 			}
 		}, 60) // High frequency for smooth sync
-
 		const unsubscribe = store.listen((update) => {
 			if (update.source === 'user') {
 				// Accumulate only relevant changes (shapes, assets, pages, document)
@@ -248,17 +230,14 @@ export function usePusherPersistence() {
 						pendingChanges.removed[id] = record
 					}
 				}
-
 				flushBroadcast()
 				saveToDb()
 			}
 		}, { scope: 'document' })
-
 		return () => {
 			unsubscribe()
 			window.removeEventListener('beforeunload', handleBeforeUnload)
 		}
 	}, [store, loadingState.status])
-
 	return { store, loadingState }
 }
